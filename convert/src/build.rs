@@ -1,7 +1,6 @@
 use grafeia_core::*;
 use grafeia_core::builder::*;
 use grafeia_core::object::svg::*;
-#[cfg(feature = "tex")]
 use grafeia_core::object::tex::*;
 use std::borrow::Cow;
 
@@ -53,7 +52,6 @@ pub fn build() -> State<'static> {
     let font_face = document.add_font(
         &include_bytes!("../../data/Cormorant-Regular.ttf")[..]
     );
-    #[cfg(feature = "tex")]
     let math_font = document.add_font(
         &include_bytes!("../../data/latinmodern-math.otf")[..]
     );
@@ -72,19 +70,18 @@ pub fn build() -> State<'static> {
             .word("using")
             .object(Object::Svg(SvgObject::new(Scale::FitTextHeight, include_bytes!("../../data/pathfinder_logo.svg")[..].into())))
             .finish()
-        // TeX objects come back with the `tex` feature (stage 2).
-        // TODO(stage 2, needs the tex feature): .paragraph()
-        // TODO(stage 2, needs the tex feature): .text("Using ReX to render")
-        // TODO(stage 2, needs the tex feature): .object(Object::TeX(TeX::text(r#"T_e X"#, math_font)))
-        // TODO(stage 2, needs the tex feature): .finish()
-        // TODO(stage 2, needs the tex feature): .paragraph()
-        // TODO(stage 2, needs the tex feature): .text("A inline equation")
-        // TODO(stage 2, needs the tex feature): .object(Object::TeX(TeX::text(r#"\phi = \frac{1 + \sqrt{5}}{2}"#, math_font)))
-        // TODO(stage 2, needs the tex feature): .finish()
+        .paragraph()
+            .text("Using ReX to render")
+            .object(Object::TeX(TeX::text(r#"T_e X"#, math_font)))
+            .finish()
+        .paragraph()
+            .text("A inline equation")
+            .object(Object::TeX(TeX::text(r#"\phi = \frac{1 + \sqrt{5}}{2}"#, math_font)))
+            .finish()
         .paragraph()
             .text("And more text to collide with the previous equation.")
             .finish()
-        // TODO(stage 2, needs the tex feature): .object(Object::TeX(TeX::display(r#"\frac{1}{\left(\sqrt{\phi\sqrt5} - \phi\right) e^{\frac{2}{5}\pi}} = 1 + \frac{e^{-2\pi}}{1 + \frac{e^{-4\pi}}{1 + \frac{e^{-6\pi}}{1 + \frac{e^{-8\pi}}{1 + \unicodecdots}}}}"#, math_font)))
+        .object(Object::TeX(TeX::display(r#"\frac{1}{\left(\sqrt{\phi\sqrt5} - \phi\right) e^{\frac{2}{5}\pi}} = 1 + \frac{e^{-2\pi}}{1 + \frac{e^{-4\pi}}{1 + \frac{e^{-6\pi}}{1 + \frac{e^{-8\pi}}{1 + \unicodecdots}}}}"#, math_font)))
         .object(Object::Svg(SvgObject::new(Scale::FitWidth, include_bytes!("../../data/Ghostscript_Tiger.svg")[..].into())))
         .finish();
 

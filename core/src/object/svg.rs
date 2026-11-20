@@ -98,7 +98,9 @@ impl SvgObject {
     pub fn draw(&self, _: ObjectCtx, origin: Vector2F, size: Vector2F, scene: &mut Scene) {
         let svg_size = self.size;
         let scale = size.x() / svg_size.x();
-        let tr = Transform2F::from_translation(origin)
+        // `origin` is the baseline of the line the object sits on; an image hangs
+        // above it, like the ink of a glyph.
+        let tr = Transform2F::from_translation(origin - Vector2F::new(0.0, size.y()))
             * Transform2F::from_scale(Vector2F::splat(scale));
 
         for &(ref outline, color) in &self.paths {

@@ -6,7 +6,7 @@ authors = ["Sebastian K <s3bk@protonmail.com>"]
 edition = "2018"
 
 [dependencies]
-grafeia_core = { path = "../core" }
+grafeia_core = { path = "../core", features = ["tex"] }
 log = "*"
 # The 2019 `docx` crate (strong-xml -> jetscii 0.4) no longer compiles on current
 # rustc, so the DOCX importer sits behind a feature until it is ported.
@@ -21,8 +21,6 @@ env_logger = "*"
 
 [features]
 import-docx = ["dep:docx"]
-# ReX objects; needs the scene work of stage 2 before it can be on by default.
-tex = ["grafeia_core/tex"]
 # The markdown and pdf importers were written against the 2019 pulldown-cmark and
 # pathfinder APIs and are not buildable today; the features only exist so the
 # binaries stay out of a plain `cargo build`.

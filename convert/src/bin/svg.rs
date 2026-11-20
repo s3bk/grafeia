@@ -7,15 +7,15 @@ use std::io::BufReader;
 
 /// `svg [input.graf [prefix]]`
 ///
-/// Writes one SVG per column: `demo-1.svg`, `demo-2.svg`, … Without an input the
-/// demo document from `grafeia_convert::build` is laid out directly, so the two
-/// demo binaries agree: `demo` stores the document, `svg` draws it.
+/// Writes one SVG per column into `output/`: `output/demo-1.svg`, … Without an
+/// input the demo document from `grafeia_convert::build` is laid out directly, so
+/// the two demo binaries agree: `demo` stores the document, `svg` draws it.
 fn main() {
     env_logger::init();
 
     let mut args = std::env::args().skip(1);
     let input = args.next();
-    let prefix = args.next().unwrap_or_else(|| "demo".to_owned());
+    let prefix = args.next().unwrap_or_else(|| "output/demo".to_owned());
 
     let state: State<'static> = match input {
         Some(path) => State::load(BufReader::new(File::open(&path).expect("can't open input"))).unwrap(),
@@ -24,6 +24,10 @@ fn main() {
 
     let mut cache = Cache::new();
     cache.layout(&state.storage, &state.design, &state.target, state.root);
+
+    if let Some(dir) = std::path::Path::new(&prefix).parent() {
+        std::fs::create_dir_all(dir).expect("can't create output directory");
+    }
 
     let pages = cache.columns.as_ref().unwrap().columns().count();
     for page_nr in 0..pages {
