@@ -5,8 +5,7 @@ members = [
     "web",
     "server",
     "convert",
-    "rex",
-    "tex",
+    "gui",
 ]
 
 #[patch."https://github.com/s3bk/pathfinder_view"]

@@ -1,5 +1,3 @@
-#![feature(generators, generator_trait, entry_insert)]
-
 use serde::{Serialize, Deserialize};
 
 #[macro_use] extern crate log;
@@ -18,7 +16,6 @@ pub mod units;
 pub mod builder;
 pub mod draw;
 pub mod net;
-mod gen;
 mod text;
 pub mod object;
 mod document;

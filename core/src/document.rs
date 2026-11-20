@@ -164,36 +164,37 @@ impl Weave {
         self.clock.seen(atom.id.clock);
     }
     pub fn items<'s>(&'s self) -> impl Iterator<Item=(Id, Item)> + 's {
-        use crate::gen::GenIter;
-
-        let mut pending: Option<(Id, Item)> = None;
-        GenIter::new(move || {
-            for atom in self.atoms.iter() {
-                match atom.op {
-                    AtomOp::Add(item) => {
-                        if let Some((id, item)) = pending.replace((atom.id, item)) {
-                            yield (id, item);
+        struct Items<'a> {
+            atoms: std::slice::Iter<'a, Atom>,
+            pending: Option<(Id, Item)>,
+        }
+        impl<'a> Iterator for Items<'a> {
+            type Item = (Id, Item);
+            fn next(&mut self) -> Option<(Id, Item)> {
+                while let Some(atom) = self.atoms.next() {
+                    match atom.op {
+                        AtomOp::Add(item) => {
+                            if let Some(done) = self.pending.replace((atom.id, item)) {
+                                return Some(done);
+                            }
                         }
-                    }
-                    AtomOp::Replace(item) => {
-                        match pending {
-                            Some((prev, _)) if prev == atom.prev => pending = Some((atom.id, item)),
-                            _ => {}
+                        AtomOp::Replace(item) => {
+                            if let Some((prev, _)) = self.pending {
+                                if prev == atom.prev { self.pending = Some((atom.id, item)); }
+                            }
                         }
-                    }
-                    AtomOp::Remove => {
-                        // we clear last_id when removing an item, so it can only happen at most once for each item
-                        match pending {
-                            Some((prev, _)) if prev == atom.prev => pending = None,
-                            _ => {}
+                        AtomOp::Remove => {
+                            // we clear last_id when removing an item, so it can only happen at most once for each item
+                            if let Some((prev, _)) = self.pending {
+                                if prev == atom.prev { self.pending = None; }
+                            }
                         }
                     }
                 }
+                self.pending.take()
             }
-            if let Some((id, item)) = pending.take() {
-                yield (id, item);
-            }
-        })
+        }
+        Items { atoms: self.atoms.iter(), pending: None }
     }
     pub fn render<'s>(&'s self) -> impl Iterator<Item=Item> + 's {
         self.items().map(|(_, item)| item)
@@ -582,39 +583,47 @@ impl Document {
         id
     }
     pub fn childen<'s>(&'s self, parent: SequenceId) -> impl Iterator<Item=Tag> + 's {
-        use crate::gen::GenIter;
-        let storage = &self.storage;
-        GenIter::new(move || {
-            let mut stack = vec![];
-            let traverse = move |key| {
-                let weave = storage.weaves.get(key).unwrap();
-                //debug!("atoms of {:?}: {:?}", key, weave.atoms);
-                (key, weave.items())
-            };
-
-            //debug!("children of {:?}", parent);
-            let mut current = traverse(parent);
-
-            loop {
-                while let Some((item_id, item)) = current.1.next() {
-                    assert!(stack.len() < 10);
-                    if let Item::Sequence(child) = item {
-                        //debug!("entering {:?}", child);
-                        assert_ne!(current.0, child);
-                        stack.push(std::mem::replace(&mut current, traverse(child)));
-                        continue;
-                    } else {
-                        yield Tag::Item(current.0, item_id);
+        struct Children<'a> {
+            storage: &'a Storage,
+            stack: Vec<(SequenceId, std::vec::IntoIter<(Id, Item)>)>,
+            current: (SequenceId, std::vec::IntoIter<(Id, Item)>),
+        }
+        impl<'a> Children<'a> {
+            fn traverse(&self, key: SequenceId) -> (SequenceId, std::vec::IntoIter<(Id, Item)>) {
+                let weave = self.storage.weaves.get(key).unwrap();
+                (key, weave.items().collect::<Vec<_>>().into_iter())
+            }
+        }
+        impl<'a> Iterator for Children<'a> {
+            type Item = Tag;
+            fn next(&mut self) -> Option<Tag> {
+                loop {
+                    if let Some((item_id, item)) = self.current.1.next() {
+                        assert!(self.stack.len() < 10);
+                        if let Item::Sequence(child) = item {
+                            //debug!("entering {:?}", child);
+                            assert_ne!(self.current.0, child);
+                            let child_iter = self.traverse(child);
+                            let parent_iter = std::mem::replace(&mut self.current, child_iter);
+                            self.stack.push(parent_iter);
+                            continue;
+                        } else {
+                            return Some(Tag::Item(self.current.0, item_id));
+                        }
+                    }
+                    //debug!("leaving {:?}", self.current.0);
+                    match self.stack.pop() {
+                        Some(parent_iter) => { self.current = parent_iter; }
+                        None => return None,
                     }
                 }
-                //debug!("leaving {:?}", current.0);
-                if let Some(parent_iter) = stack.pop() {
-                    current = parent_iter;
-                    continue;
-                }
-                break;
             }
-        })
+        }
+        let root = {
+            let weave = self.storage.weaves.get(parent).unwrap();
+            (parent, weave.items().collect::<Vec<_>>().into_iter())
+        };
+        Children { storage: &self.storage, stack: vec![], current: root }
     }
 
     pub fn create_type(&mut self, name: &str, typ: Type) -> TypeId {

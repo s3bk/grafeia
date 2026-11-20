@@ -1,5 +1,3 @@
-#![feature(test)]
-
 use grafeia_core::*;
 use grafeia_core::draw::Cache;
 use std::hint::black_box;
