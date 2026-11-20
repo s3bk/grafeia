@@ -16,6 +16,7 @@ pathfinder_geometry = { git = "https://github.com/s3bk/pathfinder/" }
 pathfinder_content = { git = "https://github.com/s3bk/pathfinder/" }
 pathfinder_color = { git = "https://github.com/s3bk/pathfinder/" }
 pathfinder_renderer = { git = "https://github.com/s3bk/pathfinder/" }
+pathfinder_export = { git = "https://github.com/s3bk/pathfinder/" }
 env_logger = "*"
 
 [features]
@@ -42,3 +43,7 @@ required-features = ["markdown"]
 name = "pdf"
 path = "src/bin/pdf.rs"
 required-features = ["pdf"]
+
+[[bin]]
+name = "svg"
+path = "src/bin/svg.rs"

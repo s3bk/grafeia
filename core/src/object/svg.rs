@@ -10,7 +10,6 @@ use pathfinder_renderer::{
     scene::{Scene, DrawPath}
 };
 use crate::*;
-use crate::object::DrawCtx;
 use std::hash::{Hash, Hasher};
 use std::fmt;
 
@@ -124,8 +123,7 @@ fn collect(node: &usvg::Node, paths: &mut Vec<(Outline, ColorU)>) {
                 None => None
             };
             if let Some(color) = color {
-                let outline = outline_of(path.data())
-                    .transformed(&transform_of(&path.abs_transform()));
+                let outline = outline_of(path.data(), &transform_of(&path.abs_transform()));
                 if !outline.is_empty() {
                     paths.push((outline, color))
                 }
@@ -146,13 +144,22 @@ fn color_of(paint: &usvg::Paint, opacity: f32) -> Option<ColorU> {
     }
 }
 
+/// `usvg::Transform` is the `tiny-skia` affine: `sx ky kx sy tx ty` with column
+/// vectors, while `Transform2F::row_major` wants a row-major `[m11 m12 m13; m21 m22 m23]`,
+/// so the translation goes in slots 3 and 6 and x/y scale on the diagonal.
 fn transform_of(transform: &usvg::Transform) -> Transform2F {
-    Transform2F::row_major(transform.sx, transform.ky, transform.kx, transform.sy,
-                           transform.tx, transform.ty)
+    Transform2F::row_major(transform.sx, transform.kx, transform.tx,
+                           transform.ky, transform.sy, transform.ty)
 }
 
-fn outline_of(path: &usvg::tiny_skia_path::Path) -> Outline {
+/// Converts a `tiny-skia` path to a pathfinder outline, applying `transform` to
+/// every point on the way in.
+fn outline_of(path: &usvg::tiny_skia_path::Path, transform: &Transform2F) -> Outline {
     use usvg::tiny_skia_path::PathSegment;
+
+    let tr = |p: usvg::tiny_skia_path::Point| -> Vector2F {
+        *transform * Vector2F::new(p.x, p.y)
+    };
 
     let mut outline = Outline::new();
     let mut contour = Contour::new();
@@ -164,20 +171,17 @@ fn outline_of(path: &usvg::tiny_skia_path::Path) -> Outline {
                 if started {
                     outline.push_contour(std::mem::replace(&mut contour, Contour::new()));
                 }
-                contour.push_endpoint(Vector2F::new(p.x, p.y));
+                contour.push_endpoint(tr(p));
                 started = true;
             }
             PathSegment::LineTo(p) => {
-                contour.push_endpoint(Vector2F::new(p.x, p.y));
+                contour.push_endpoint(tr(p));
             }
             PathSegment::QuadTo(ctrl, p) => {
-                contour.push_quadratic(Vector2F::new(ctrl.x, ctrl.y),
-                                       Vector2F::new(p.x, p.y));
+                contour.push_quadratic(tr(ctrl), tr(p));
             }
             PathSegment::CubicTo(ctrl0, ctrl1, p) => {
-                contour.push_cubic(Vector2F::new(ctrl0.x, ctrl0.y),
-                                   Vector2F::new(ctrl1.x, ctrl1.y),
-                                   Vector2F::new(p.x, p.y));
+                contour.push_cubic(tr(ctrl0), tr(ctrl1), tr(p));
             }
             PathSegment::Close => contour.close()
         }
