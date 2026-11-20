@@ -12,5 +12,5 @@ env_logger = "*"
 tokio = { version = "0.2", features = ["macros"] }
 futures = { version = "0.3" }
 grafeia_core = { path = "../core" }
-bincode = "*"
+bincode = "1.3"
 log = "0.4.8"
