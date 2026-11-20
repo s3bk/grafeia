@@ -1,8 +1,12 @@
+use pathfinder_renderer::paint::Paint;
+use pathfinder_renderer::scene::{DrawPathId, Scene};
+use grafeia_core::object::ObjectCtx;
+use pathfinder_color::ColorU;
 use grafeia_core::*;
 use std::io;
 use std::fmt::Write;
 use std::collections::HashMap;
-use pathfinder_content::{outline::Outline, segment::SegmentKind};
+use pathfinder_content::{outline::{ContourIterFlags, Outline}, segment::SegmentKind};
 use pathfinder_geometry::{
     rect::RectF,
     vector::Vector2F,
@@ -19,9 +23,14 @@ use std::fmt;
 struct PdfRect(RectF);
 impl fmt::Display for PdfRect {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // PDF boxes are [llx lly urx ury] with the origin bottom-left; a rect
+        // built from a top-down origin reaches here with its corners the other
+        // way round, which readers take as a negative box.
         let ll = self.0.lower_left();
         let ur = self.0.upper_right();
-        write!(f, "[{} {} {} {}]", ll.x(), ll.y(), ur.x(), ur.y())
+        write!(f, "[{} {} {} {}]",
+            ll.x().min(ur.x()), ll.y().min(ur.y()),
+            ll.x().max(ur.x()), ll.y().max(ur.y()))
     }
 }
 
@@ -99,6 +108,11 @@ impl Stream {
         writeln!(self.0, "f").unwrap();
     }
 
+    pub fn set_fill_color(&mut self, color: ColorU) {
+        let to = |c: u8| c as f32 / 255.0;
+        writeln!(self.0, "{} {} {} rg", to(color.r), to(color.g), to(color.b)).unwrap();
+    }
+
     pub fn close(&mut self) {
         writeln!(self.0, "h").unwrap();
     }
@@ -109,7 +123,7 @@ impl Stream {
 
     pub fn draw_path(&mut self, outline: Outline) {
         for contour in outline.contours() {
-            for (segment_index, segment) in contour.iter().enumerate() {
+            for (segment_index, segment) in contour.iter(ContourIterFlags::empty()).enumerate() {
                 if segment_index == 0 {
                     self.move_to(segment.baseline.from());
                 }
@@ -142,13 +156,17 @@ impl Stream {
 /// The top-level struct that represents a (partially) in-memory PDF file
 pub struct Pdf {
     objects: Vec<PdfObject>,
-    defines: HashMap<RenderItem, usize>
+    defines: HashMap<RenderItem, usize>,
+    page_height: f32,
 }
 impl Pdf {
     /// Create a new blank PDF document
     #[inline]
     pub fn new() -> Self {
         Self {
+            // 1 = catalog, 2 = page tree, 3 = the shared /Resources dictionary.
+            // Object 3 is reserved up front so every page can name it before the
+            // xobjects themselves exist.
             objects: vec![
                 PdfObject {
                     contents: Vec::new(),
@@ -162,8 +180,15 @@ impl Pdf {
                     is_xobject: false,
                     offset: None,
                 },
+                PdfObject {
+                    contents: Vec::new(),
+                    is_page: false,
+                    is_xobject: false,
+                    offset: None,
+                },
             ],
-            defines: HashMap::new()
+            defines: HashMap::new(),
+            page_height: 0.0,
         }
     }
     fn defined(&mut self, key: RenderItem, f: impl FnOnce() -> Outline) -> usize {
@@ -188,8 +213,12 @@ impl Pdf {
     }
     pub fn render_page(&mut self, cache: &Cache, storage: &Storage, target: &Target, design: &Design, column: Column) {
         let content_box: RectF = target.content_box.into();
+        let media_box: RectF = target.media_box.into();
+        self.page_height = media_box.height();
         let mut stream = Stream::new();
-        writeln!(stream.0, "{} cm", PdfTransform(Transform2F::row_major(1.0, 0.0, 0.0, -1.0, 0.0, content_box.height())));
+        // Top-down layout coordinates into PDF's bottom-left origin: flip y about
+        // the top edge of the media box.
+        writeln!(stream.0, "1 0 0 -1 0 {} cm", self.page_height);
 
         for (y, line) in column {
             for (x, size, item, tag) in line {
@@ -214,10 +243,26 @@ impl Pdf {
                         stream.use_define(n, Transform2F::from_translation(p));
                     }
                     RenderItem::Object(key) => {
-                        /*
-                        let typ_design = design.get_type_or_default(storage.get_weave(tag.seq()).typ());
-                        page.get_object(key).draw(typ_design, p, size.into(), &mut scene);
-                        */
+                        // Objects draw themselves into a scene; emit those paths
+                        // with their own colour, placed at the object's origin.
+                        let object = storage.get_object(key);
+                        let typ = storage.get_weave(tag.seq()).typ();
+                        let mut scene = Scene::new();
+                        object.draw(
+                            ObjectCtx { storage, target, design, typ },
+                            Vector2F::zero(),
+                            size,
+                            &mut scene
+                        );
+                        writeln!(stream.0, "q 1 0 0 1 {} {} cm", p.x(), p.y()).unwrap();
+                        for n in 0 .. scene.draw_path_count() {
+                            let draw_path = scene.get_draw_path(DrawPathId(n)).clone();
+                            let color = scene.get_paint(draw_path.paint).base_color();
+                            stream.set_fill_color(color);
+                            stream.draw_path(draw_path.outline);
+                            stream.fill();
+                        }
+                        writeln!(stream.0, "Q").unwrap();
                     }
                     RenderItem::Empty => {}
                 };
@@ -235,6 +280,7 @@ impl Pdf {
 /Parent 2 0 R
 /MediaBox {}
 /TrimBox {}
+/Resources 3 0 R
 /Contents {} 0 R
 >>\n",
         PdfRect(target.media_box.into()),
@@ -260,12 +306,13 @@ impl Pdf {
         use std::io::Write;
         out.write_all(b"%PDF-1.7\n%\xB5\xED\xAE\xFB\n")?;
 
-        let mut xobjects = String::from("<<\n");
+        let mut xobjects = String::from("<< /XObject <<");
         for n in self.defines.values() {
             writeln!(xobjects, "/x{} {} 0 R", n, n);
         }
-        writeln!(xobjects, ">>");
-        let xobjects_nr = self.add_object(xobjects.into_bytes(), false, false);
+        writeln!(xobjects, ">> >>");
+        self.objects[2].contents = xobjects.into_bytes();
+        let xobjects_nr = 3usize;
 
         // Write out each object
         for (idx, obj) in self.objects.iter_mut().enumerate().skip(2) {
@@ -301,12 +348,12 @@ impl Pdf {
         out.write_all(b"0000000000 65535 f \n")?;
 
         for obj in &self.objects {
-            write!(out, "{:010} 00000 f \n", obj.offset.unwrap())?;
+            write!(out, "{:010} 00000 n \n", obj.offset.unwrap())?;
         }
 
         // Write the document trailer
         out.write_all(b"trailer\n")?;
-        write!(out, "<< /Size {}\n", self.objects.len())?;
+        write!(out, "<< /Size {}\n", self.objects.len() + 1)?;
         out.write_all(b"/Root 1 0 R >>\n")?;
 
         // Write the offset to the xref table

@@ -7,6 +7,7 @@ edition = "2018"
 
 [dependencies]
 grafeia_core = { path = "../core", features = ["tex"] }
+font = { git = "https://github.com/pdf-rs/font", branch = "opentype-api", features = ["opentype", "woff", "math", "cff"] }
 log = "*"
 # The 2019 `docx` crate (strong-xml -> jetscii 0.4) no longer compiles on current
 # rustc, so the DOCX importer sits behind a feature until it is ported.
