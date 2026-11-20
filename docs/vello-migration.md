@@ -170,6 +170,66 @@ old backend), the commented `[patch]` blocks in `Cargo.toml` go, README's
 - Stage 3: the emulator/browser check — the page must look the same, cursor and
   selection included.
 
+## ReX
+
+ReX (`grafeia/ReX`, HEAD f969f53 from 2022-02) is the sibling the engine came
+from: same `Backend`-trait layout, same `font` crate, `pathfinder_renderer` +
+`pathfinder_export` for output. It is ported already, on branch `vello`
+(commit abd8ac7), and the port is the template for grafeia's stage 2: it proves
+that a `Backend` implementation per renderer is all it takes, and it produced
+the conversion helpers grafeia will want.
+
+What the port had to fix before any vello question:
+
+* `font` was taken with `features = ["woff"]` only. Every `ctx.math` access was
+  unresolved — the crate did not compile. It needs `["opentype", "woff", "math",
+  "cff"]`.
+* `font`'s encoder API: `MathFont` is `OpenTypeFont<OutlineEncoder>` now, a
+  glyph's shape is `Shape::Simple/Compound/Empty` instead of a ready `Outline`,
+  and `downcast_box` is gone. Use `font::parse(data, &mut enc)` /
+  `OpenTypeFont::parse(data, &mut OutlineEncoder)`, and
+  `font::pathfinder_impl::flatten(font, gid)` where an `Outline` is wanted.
+* `tests/` is from a different generation of the crate (`rex::RenderSettings`,
+  `render::svg::render_to_string`, `bincode::Infinite`) and does not compile.
+  `examples/qc.rs` is the live harness. Left alone; it should be rewritten or
+  deleted, not ported.
+
+What replaced what:
+
+| old | new |
+| --- | --- |
+| `render/scene.rs`, `SceneWrapper` over `pathfinder_renderer::Scene` | `render/svg.rs` (`SvgBackend`), `render/vello_backend.rs` (`VelloBackend`, feature `vello`), `render/cpu.rs` (`CpuBackend`, feature `vello_cpu`) |
+| `pathfinder_export` SVG export | `SvgBackend::finish()` — filled `<path>`s, view box measured from what was drawn |
+| `pathfinder_color::ColorU` | `peniko`'s `AlphaColor` (via `vello`/`vello_cpu` re-exports) |
+| `OutlineStrokeToFill` for debug boxes | kept, in `render/bez.rs` — all three backends draw the same expanded outline, so no backend needs stroke support |
+
+New: `render/bez.rs` (`Outline` → kurbo `BezPath`, `Transform2F` → `Affine`)
+and `render/bounds.rs` (`BoundsBackend`, draws nothing, reports the ink box —
+a pixmap or texture has to be sized before the first draw, and
+`Renderer::size` only knows ascent/descent hints).
+
+Version note: `vello 0.11` resolves to `kurbo 0.13`, so a `kurbo = "0.11.3"`
+dependency is a second, incompatible copy — pin `0.13.1` or use
+`vello::kurbo`. `vello_cpu 0.3` shares that kurbo here, so one conversion serves
+both.
+
+Verified: `cargo check --lib` / `--features vello` / `--features vello_cpu` /
+`--examples` in all three configurations; `qc` writes 281 paths (SVG) and a
+2280x115 PNG grid for ten sample formulas; `x`, `x + y`, `\frac{1}{2}`,
+`\sum_{k=0}^{n} k^2` rasterise with ink where the layout puts it; and the
+layout tree for `\frac{1}{2}` is byte-identical to the pre-port one (checked
+against f969f53 in a worktree), so the port changed rendering, not metrics.
+
+Open in ReX, worth deciding rather than porting silently:
+
+* The fraction layout puts the numerator at full size and records a *negative*
+  depth (`\frac{1}{2}` → height 12.79, depth -6.4, at a 10-unit em) — verified
+  identical before the port, so it is a rex bug, not a port bug.
+* `samples/*.svg` were produced by the old exporter; the new SVG has no
+  `@font-face`/text elements, only paths, so they cannot be regenerated
+  byte-identically.
+* The fonts `qc` needs are not in the repo; `tests/out/rex-xits.otf` works.
+
 ## Open questions
 
 - Does ReX get revived on vello too, or does the `tex` feature stay dead? That
