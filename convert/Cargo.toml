@@ -1,5 +1,6 @@
 [package]
 name = "grafeia_convert"
+description = "γραφείο – converters and demo binaries"
 version = "0.1.0"
 authors = ["Sebastian K <s3bk@protonmail.com>"]
 edition = "2018"
@@ -7,10 +8,37 @@ edition = "2018"
 [dependencies]
 grafeia_core = { path = "../core" }
 log = "*"
-docx = "*"
+# The 2019 `docx` crate (strong-xml -> jetscii 0.4) no longer compiles on current
+# rustc, so the DOCX importer sits behind a feature until it is ported.
+docx = { version = "*", optional = true }
 pulldown-cmark = "*"
 pathfinder_geometry = { git = "https://github.com/s3bk/pathfinder/" }
 pathfinder_content = { git = "https://github.com/s3bk/pathfinder/" }
 pathfinder_color = { git = "https://github.com/s3bk/pathfinder/" }
 pathfinder_renderer = { git = "https://github.com/s3bk/pathfinder/" }
 env_logger = "*"
+
+[features]
+import-docx = ["dep:docx"]
+# ReX objects; needs the scene work of stage 2 before it can be on by default.
+tex = ["grafeia_core/tex"]
+# The markdown and pdf importers were written against the 2019 pulldown-cmark and
+# pathfinder APIs and are not buildable today; the features only exist so the
+# binaries stay out of a plain `cargo build`.
+markdown = []
+pdf = []
+
+[[bin]]
+name = "docx"
+path = "src/bin/docx.rs"
+required-features = ["import-docx"]
+
+[[bin]]
+name = "markdown"
+path = "src/bin/markdown.rs"
+required-features = ["markdown"]
+
+[[bin]]
+name = "pdf"
+path = "src/bin/pdf.rs"
+required-features = ["pdf"]

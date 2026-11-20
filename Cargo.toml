@@ -5,7 +5,6 @@ members = [
     "web",
     "server",
     "convert",
-    "gui",
 ]
 
 #[patch."https://github.com/s3bk/pathfinder_view"]
@@ -28,3 +27,15 @@ members = [
 #pathfinder_resources = { path = "../pathfinder/resources"}
 #pathfinder_simd = { path = "../pathfinder/simd"}
 #pathfinder_svg = { path = "../pathfinder/svg"}
+
+# `font` (pdf-rs) pulls pathfinder from servo/pathfinder; grafeia and vector use
+# s3bk's fork. Two copies of pathfinder_geometry means two incompatible `Outline`
+# types, so point every pathfinder dependency at the fork.
+[patch."https://github.com/servo/pathfinder"]
+pathfinder_geometry = { git = "https://github.com/s3bk/pathfinder/" }
+pathfinder_content  = { git = "https://github.com/s3bk/pathfinder/" }
+pathfinder_color    = { git = "https://github.com/s3bk/pathfinder/" }
+pathfinder_renderer = { git = "https://github.com/s3bk/pathfinder/" }
+pathfinder_export   = { git = "https://github.com/s3bk/pathfinder/" }
+pathfinder_simd     = { git = "https://github.com/s3bk/pathfinder/" }
+pathfinder_resources= { git = "https://github.com/s3bk/pathfinder/" }

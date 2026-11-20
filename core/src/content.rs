@@ -25,13 +25,14 @@ use std::io;
 use std::path::Path;
 use std::ops::{Deref};
 use std::sync::Arc;
-use pathfinder_content::outline::Outline;
 use serde::{Serialize, Deserialize, Serializer};
 use hyphenation::{
     Standard,
     extended::{Extended, Subregion},
     Hyphenator
 };
+
+use font::Font as _;
 
 use crate::layout::FlexMeasure;
 use crate::{*};
@@ -48,6 +49,13 @@ impl Type {
     }
 }
 
+/// A parsed font face.
+///
+/// `MATH` is the only thing the layout engine needs beyond OpenType itself, so the
+/// face is ReX's font type: an `OpenTypeFont` whose glyphs are pathfinder
+/// `Outline`s. No trait object, no downcast.
+pub type Face = rex::font::MathFont;
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct FontFace(Arc<FontFaceInner>);
 
@@ -57,12 +65,12 @@ struct FontFaceInner {
     data: Vec<u8>,
 
     #[serde(skip)]
-    face: Box<dyn font::Font<Outline> + Send + Sync + 'static>
+    face: Face
 }
 
 impl From<Vec<u8>> for FontFaceInner {
     fn from(data: Vec<u8>) -> Self {
-        let face = font::parse::<Outline>(&data);
+        let face = rex::font::parse(&data).expect("could not parse font");
         FontFaceInner { data, face }
     }
 }
@@ -77,7 +85,7 @@ impl FontFace {
 }
 impl Debug for FontFace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Font({})", self.0.face.full_name().unwrap_or(""))
+        write!(f, "Font({})", self.0.face.name().full_name.as_deref().unwrap_or(""))
     }
 }
 impl Serialize for FontFaceInner {
@@ -89,9 +97,9 @@ impl Serialize for FontFaceInner {
     }
 }
 impl Deref for FontFace {
-    type Target = dyn font::Font<Outline>;
+    type Target = Face;
     fn deref(&self) -> &Self::Target {
-        &*self.0.face
+        &self.0.face
     }
 }
 

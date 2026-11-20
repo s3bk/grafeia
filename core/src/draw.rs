@@ -3,8 +3,8 @@ use crate::layout::{Writer, Glue, ColumnLayout, FlexMeasure, Column, Columns, It
 use crate::units::Length;
 use crate::text::{grapheme_indices, build_gids};
 use std::collections::hash_map::{HashMap};
-use font;
-use vector::{PathStyle, Surface, PathBuilder, FillRule, Paint};
+use font::Font as _;
+use vector::{PathStyle, Surface, PathBuilder, FillRule, Paint, LineStyle};
 use pathfinder_geometry::{
     vector::Vector2F,
     rect::RectF,
@@ -37,8 +37,10 @@ impl Layout {
     pub fn render(&self, font: &FontFace, root_tr: Transform2F) -> Outline {
         let mut outline = Outline::new();
         for &(gid, tr) in self.glyphs.iter() {
-            if let Some(glyph) = font.glyph(gid) {
-                for contour in glyph.path.contours() {
+            // `glyph_outline` is the whole glyph: a compound glyph is flattened here,
+            // so a component's own transform is already in the contours.
+            if let Some(glyph) = font.glyph_outline(gid) {
+                for contour in glyph.contours() {
                     let mut contour = contour.clone();
                     contour.transform(&(root_tr * tr));
                     outline.push_contour(contour);
@@ -392,7 +394,7 @@ impl Cache {
 
         let page_style = scene.build_style(PathStyle {
             fill: Some(Paint::white()),
-            stroke: Some((Paint::black(), 0.25)),
+            stroke: Some((Paint::black(), LineStyle::default(0.25))),
             fill_rule: FillRule::NonZero
         });
         let glyph_style = scene.build_style(PathStyle {
@@ -499,13 +501,15 @@ impl Cache {
                 let grapheme_indices = grapheme_indices(face, &word.text);
                 let layout = self.word_layout_cache.get(&(type_design.font, key, part)).unwrap();
 
-                let interpolate = |(idx_a, pos_a), (idx_b, pos_b), idx| -> Vector2F {
+                let interpolate = |(idx_a, pos_a): (usize, Vector2F),
+                                   (idx_b, pos_b): (usize, Vector2F),
+                                   idx: usize| -> Vector2F {
                     if idx == idx_b { return pos_b; }
                     let f = (idx - idx_a) as f32 / (idx_b - idx_a) as f32;
-                    pos_a + (pos_b - pos_a).scale(f)
+                    pos_a + (pos_b - pos_a) * f
                 };
 
-                let mut last = (0, Vector2F::default());
+                let mut last: (usize, Vector2F) = (0, Vector2F::default());
                 for (&n, &(_gid, offset)) in grapheme_indices.iter().zip(layout.glyphs.iter()) {
                     if n >= byte_pos {
                         return Some((page_nr as usize, rect.lower_left() + interpolate(last, (n, offset.vector,), byte_pos)));
@@ -569,13 +573,13 @@ impl Cache {
         let mut offset = Vector2F::default();
         let mut glyphs = Vec::with_capacity(gids.len());
         for &gid in gids.iter() {
-            if let Some(glyph) = face.glyph(gid) {
+            if let Some(metrics) = face.glyph_metrics(gid.0 as u16) {
                 if let Some(left) = last_gid.replace(gid) {
                     offset = offset + Vector2F::new(face.kerning(left, gid), 0.0);
                 }
                 glyphs.push((gid, transform * Transform2F::from_translation(offset)));
 
-                offset = offset + glyph.metrics.advance;
+                offset = offset + Vector2F::new(metrics.advance, 0.0);
             }
         }
 
