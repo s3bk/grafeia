@@ -91,6 +91,7 @@ AI-era small businesses carry every risk of landing in the same shape. Owner run
 The pitch for the current default is: trade a boss for a landlord who can also be your competitor’s landlord. Whether that is better depends on how much leverage the landlord accumulates.
 
 %kicker The Equipment Model
+
 # Why Local Inference Changes the Math
 
 Here is where the future forks, and the optimistic branch has real engineering behind it.

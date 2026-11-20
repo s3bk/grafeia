@@ -43,12 +43,22 @@ enum Block {
 
 fn parse(input: &str) -> Vec<Block> {
     let mut blocks = Vec::new();
-    for chunk in input.split("\n\n") {
-        let chunk = chunk.trim();
-        if chunk.is_empty() {
-            continue;
+    let mut paragraph: Vec<&str> = Vec::new();
+
+    fn flush(paragraph: &mut Vec<&str>, blocks: &mut Vec<Block>) {
+        if !paragraph.is_empty() {
+            blocks.push(Block::Paragraph(paragraph.join(" ")));
+            paragraph.clear();
         }
-        if let Some(rest) = chunk.strip_prefix('%') {
+    }
+
+    for line in input.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            flush(&mut paragraph, &mut blocks);
+        } else if line.starts_with('%') {
+            flush(&mut paragraph, &mut blocks);
+            let rest = &line[1 ..];
             let (key, value) = match rest.find(' ') {
                 Some(idx) => (&rest[.. idx], rest[idx + 1 ..].trim()),
                 None => (rest, ""),
@@ -64,16 +74,20 @@ fn parse(input: &str) -> Vec<Block> {
                 "kicker" => Block::Kicker(value.into()),
                 other => panic!("unknown front matter key %{}", other),
             });
-        } else if let Some(rest) = chunk.strip_prefix("## ") {
+        } else if let Some(rest) = line.strip_prefix("## ") {
+            flush(&mut paragraph, &mut blocks);
             blocks.push(Block::Subheading(rest.trim().into()));
-        } else if let Some(rest) = chunk.strip_prefix("# ") {
+        } else if let Some(rest) = line.strip_prefix("# ") {
+            flush(&mut paragraph, &mut blocks);
             blocks.push(Block::Heading(rest.trim().into()));
-        } else if let Some(rest) = chunk.strip_prefix("+ ") {
+        } else if let Some(rest) = line.strip_prefix("+ ") {
+            flush(&mut paragraph, &mut blocks);
             blocks.push(Block::ListItem(rest.trim().into()));
         } else {
-            blocks.push(Block::Paragraph(chunk.replace('\n', " ")));
+            paragraph.push(line);
         }
     }
+    flush(&mut paragraph, &mut blocks);
     blocks
 }
 
@@ -386,7 +400,7 @@ fn main() {
                 items.push(Item::Object(key));
                 continue;
             }
-            Block::Kicker(t) => { seq_items.extend(document.create_text(&t)); prev_was_kicker = true; kicker_typ },
+            Block::Kicker(t) => { seq_items.extend(document.create_text(&t.to_uppercase())); prev_was_kicker = true; kicker_typ },
             Block::Heading(t) => {
                 seq_items.extend(document.create_text(&t));
                 if prev_was_kicker {
