@@ -1375,6 +1375,7 @@ dependencies = [
  "log 0.4.35",
  "pathfinder_color",
  "pathfinder_content",
+ "pathfinder_export",
  "pathfinder_geometry",
  "pathfinder_renderer",
  "pulldown-cmark",
