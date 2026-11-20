@@ -1,6 +1,7 @@
 use serde::{Serialize, Deserialize, Serializer, ser::SerializeTuple};
 use pathfinder_color::ColorU;
 use pathfinder_content::outline::{Contour, Outline};
+use pathfinder_content::stroke::{LineCap, LineJoin, OutlineStrokeToFill, StrokeStyle};
 use pathfinder_geometry::{
     vector::Vector2F,
     transform2d::Transform2F
@@ -13,18 +14,36 @@ use crate::*;
 use std::hash::{Hash, Hasher};
 use std::fmt;
 
-/// An SVG image, flattened to filled outlines at parse time.
+/// A stroke, in SVG user units of the picture.
+#[derive(Clone, Debug)]
+struct Stroke {
+    color: ColorU,
+    width: f32,
+    cap: LineCap,
+    join: LineJoin,
+    miter_limit: f32
+}
+
+/// One `<path>` of the picture: a filled silhouette and/or its outline.
+#[derive(Clone, Debug)]
+struct Shape {
+    outline: Outline,
+    fill: Option<ColorU>,
+    stroke: Option<Stroke>
+}
+
+/// An SVG image, flattened to shapes at parse time.
 ///
-/// `usvg` resolves transforms while it parses, so every path is stored in user
-/// units with its absolute transform already applied; drawing only has to place
-/// and scale the whole picture.
+/// `usvg` resolves inheritance and transforms while it parses, so every path is
+/// stored in user units with its absolute transform already applied; drawing
+/// only has to place and scale the whole picture.
 #[derive(Deserialize, Clone)]
 #[serde(from="(Scale, Vec<u8>)")]
 pub struct SvgObject {
     data: Vec<u8>,
     /// Size of the view box, in SVG user units.
     size: Vector2F,
-    paths: Vec<(Outline, ColorU)>,
+    shapes: Vec<Shape>,
     scale: Scale
 }
 impl fmt::Debug for SvgObject {
@@ -49,14 +68,14 @@ impl SvgObject {
         use usvg::{Tree, Options};
         let tree = Tree::from_data(&data, &Options::default()).unwrap();
         let size = tree.size();
-        let mut paths = Vec::new();
-        collect_group(tree.root(), &mut paths);
+        let mut shapes = Vec::new();
+        collect_group(tree.root(), &mut shapes);
 
         SvgObject {
             scale,
             data,
             size: Vector2F::new(size.width(), size.height()),
-            paths
+            shapes
         }
     }
 }
@@ -103,35 +122,90 @@ impl SvgObject {
         let tr = Transform2F::from_translation(origin - Vector2F::new(0.0, size.y()))
             * Transform2F::from_scale(Vector2F::splat(scale));
 
-        for &(ref outline, color) in &self.paths {
-            let paint = scene.push_paint(&Paint::from_color(color));
-            scene.push_draw_path(DrawPath::new(outline.clone().transformed(&tr), paint));
-        }
-    }
-}
-
-fn collect_group(group: &usvg::Group, paths: &mut Vec<(Outline, ColorU)>) {
-    for child in group.children() {
-        collect(child, paths)
-    }
-}
-
-fn collect(node: &usvg::Node, paths: &mut Vec<(Outline, ColorU)>) {
-    match node {
-        usvg::Node::Group(ref group) => collect_group(group, paths),
-        usvg::Node::Path(ref path) => {
-            let color = match path.fill() {
-                Some(fill) => color_of(fill.paint(), fill.opacity().get()),
-                None => None
-            };
-            if let Some(color) = color {
-                let outline = outline_of(path.data(), &transform_of(&path.abs_transform()));
-                if !outline.is_empty() {
-                    paths.push((outline, color))
+        for shape in &self.shapes {
+            let outline = shape.outline.clone().transformed(&tr);
+            // Fill first: an SVG paint server paints the fill, then the stroke.
+            if let Some(color) = shape.fill {
+                let mut fill = outline.clone();
+                // fills treat every subpath as closed
+                fill.close_all_contours();
+                let paint = scene.push_paint(&Paint::from_color(color));
+                scene.push_draw_path(DrawPath::new(fill, paint));
+            }
+            if let Some(ref stroke) = shape.stroke {
+                let style = StrokeStyle {
+                    line_width: stroke.width * scale,
+                    line_cap: stroke.cap,
+                    line_join: stroke.join
+                };
+                let mut widen = OutlineStrokeToFill::new(&outline, style);
+                widen.offset();
+                let widened = widen.into_outline();
+                if !widened.is_empty() {
+                    let paint = scene.push_paint(&Paint::from_color(stroke.color));
+                    scene.push_draw_path(DrawPath::new(widened, paint));
                 }
             }
         }
+    }
+}
+
+fn collect_group(group: &usvg::Group, shapes: &mut Vec<Shape>) {
+    for child in group.children() {
+        collect(child, shapes)
+    }
+}
+
+fn collect(node: &usvg::Node, shapes: &mut Vec<Shape>) {
+    match node {
+        usvg::Node::Group(ref group) => collect_group(group, shapes),
+        usvg::Node::Path(ref path) => {
+            let fill = match path.fill() {
+                Some(fill) => color_of(fill.paint(), fill.opacity().get()),
+                None => None
+            };
+            let abs_transform = path.abs_transform();
+            let transform = transform_of(&abs_transform);
+            // A group transform scales the geometry, and with it the stroke width:
+            // CSS widths are in the element's own user space.
+            let width_scale = (abs_transform.sx * abs_transform.sy
+                - abs_transform.kx * abs_transform.ky).abs().sqrt();
+            let stroke = path.stroke().and_then(|stroke| {
+                let color = color_of(stroke.paint(), stroke.opacity().get())?;
+                Some(Stroke {
+                    color,
+                    width: stroke.width().get() * width_scale,
+                    cap: map_line_cap(stroke.linecap()),
+                    join: map_line_join(stroke.linejoin(), stroke.miterlimit().get()),
+                    miter_limit: stroke.miterlimit().get()
+                })
+            });
+            if fill.is_none() && stroke.is_none() {
+                return
+            }
+            let outline = outline_of(path.data(), &transform);
+            if outline.is_empty() {
+                return
+            }
+            shapes.push(Shape { outline, fill, stroke })
+        }
         _ => ()
+    }
+}
+
+fn map_line_cap(cap: usvg::LineCap) -> LineCap {
+    match cap {
+        usvg::LineCap::Butt => LineCap::Butt,
+        usvg::LineCap::Round => LineCap::Round,
+        usvg::LineCap::Square => LineCap::Square
+    }
+}
+
+fn map_line_join(join: usvg::LineJoin, miter_limit: f32) -> LineJoin {
+    match join {
+        usvg::LineJoin::Miter | usvg::LineJoin::MiterClip => LineJoin::Miter(miter_limit),
+        usvg::LineJoin::Round => LineJoin::Round,
+        usvg::LineJoin::Bevel => LineJoin::Bevel
     }
 }
 
@@ -155,7 +229,8 @@ fn transform_of(transform: &usvg::Transform) -> Transform2F {
 }
 
 /// Converts a `tiny-skia` path to a pathfinder outline, applying `transform` to
-/// every point on the way in.
+/// every point on the way in. Subpaths are left open unless the path closes
+/// them, so strokes do not gain a closing segment; fills close them again.
 fn outline_of(path: &usvg::tiny_skia_path::Path, transform: &Transform2F) -> Outline {
     use usvg::tiny_skia_path::PathSegment;
 
@@ -191,7 +266,5 @@ fn outline_of(path: &usvg::tiny_skia_path::Path, transform: &Transform2F) -> Out
     if started {
         outline.push_contour(contour);
     }
-    // fills treat every subpath as closed
-    outline.close_all_contours();
     outline
 }
