@@ -7,13 +7,16 @@
 //! the words with `Tf`/`TJ` at the positions the layout chose. Diagrams —
 //! objects that draw themselves into a scene — still become filled paths,
 //! because they are not text.
+//!
+//! The entry point is [`write`], which takes a laid-out [`State`] and returns
+//! the bytes of a PDF; [`write_file`] puts them on disk.
 
-mod cff;
-mod sfnt;
+pub mod cff;
+pub mod sfnt;
+
 
 use std::collections::{BTreeSet, HashMap};
-use std::fs::File;
-use std::io::Write;
+use std::path::Path;
 
 use grafeia_core::draw::{Cache, Layout, RenderItem, WordPart};
 use grafeia_core::layout::Columns;
@@ -33,7 +36,8 @@ use pdf::font::{
     CidToGidMap, FontDescriptor, FontStream3, FontType, FontTypeExt, Type0Font, CIDFont,
 };
 use pdf::font::{Font as PdfFont, FontData};
-use pdf::object::{Lazy, MaybeRef, Rectangle, Resources, Stream, Updater};
+use pdf::object::{Lazy, MaybeRef, RcRef, Rectangle, Ref, Resolve, Resources, Stream, Updater};
+use pdf::file::Trailer;
 use pdf::primitive::{Dictionary, Name, PdfString, Primitive};
 
 /// PDF user space is points — 72 to the inch — and the layout is millimetres.
@@ -42,31 +46,41 @@ const PT_PER_MM: f32 = 72.0 / 25.4;
 /// The 50% grey of a margin number.
 const MARGIN_GREY: (u8, u8, u8) = (128, 128, 128);
 
-fn main() {
-    env_logger::init();
-    let mut args = std::env::args().skip(1);
-    let input = args
-        .next()
-        .expect("usage: pdf <input.graf> <output.pdf> [--no-subset]");
-    let output = args
-        .next()
-        .expect("usage: pdf <input.graf> <output.pdf> [--no-subset]");
-    let mut subset = true;
-    for arg in args {
-        match arg.as_str() {
-            "--no-subset" => subset = false,
-            other => panic!("unknown argument `{}`", other),
-        }
-    }
-    if let Err(e) = run(&input, &output, subset) {
-        eprintln!("pdf: {}", e);
-        std::process::exit(1);
+/// How the PDF is written.
+#[derive(Clone, Debug)]
+pub struct Options {
+    /// Subset every font to the glyphs the document uses, so a face costs only
+    /// the letters that are on the page.
+    pub subset_fonts: bool,
+
+    /// The complete source the document was made from. When it is given, it
+    /// travels inside the PDF, so the file can be opened again later and edited
+    /// with the very text and style it was set from.
+    pub source: Option<Source>,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Options { subset_fonts: true, source: None }
     }
 }
 
-fn run(input: &str, output: &str, subset_fonts: bool) -> Result<(), String> {
-    let file = File::open(input).map_err(|e| format!("{}: {}", input, e))?;
-    let state = State::load(file).map_err(|e| format!("{}: {:?}", input, e))?;
+/// Where a document came from: the markdown, and the style it was laid out
+/// with. The names are the file names to write the parts back out under.
+#[derive(Clone, Debug)]
+pub struct Source {
+    pub markdown_name: String,
+    pub markdown: String,
+    pub style_name: String,
+    pub style: String,
+}
+
+/// The key the source travels under, in the first page's dictionary.
+const SOURCE_KEY: &str = "Grafeia";
+
+/// Write a laid-out document as a PDF.
+pub fn write(state: &State, options: &Options) -> Result<Vec<u8>, String> {
+    let subset_fonts = options.subset_fonts;
     let mut cache = Cache::new();
     let _ = cache.layout(&state.storage, &state.design, &state.target, state.root);
     let columns = cache.columns.as_ref().ok_or("the layout produced no columns")?;
@@ -152,18 +166,200 @@ fn run(input: &str, output: &str, subset_fonts: bool) -> Result<(), String> {
         pages.push(page);
     }
 
-    let catalog = CatalogBuilder::from_pages(pages);
-    let data = builder.build(catalog).map_err(|e| e.to_string())?;
-    let mut out = File::create(output).map_err(|e| format!("{}: {}", output, e))?;
-    out.write_all(&data)
-        .map_err(|e| format!("{}: {}", output, e))?;
-    eprintln!(
-        "{}: {} pages, {} bytes",
-        output,
-        cache.columns.as_ref().unwrap().len(),
-        data.len()
-    );
+    // The source travels inside the PDF: the markdown and the style file in
+    // full, in a stream of their own under a key of our own in the first
+    // page's dictionary. That is what lets the file be opened again later and
+    // edited with the very text and style it was set from. It is a stream and
+    // not a dictionary of strings so that the writer compresses it, and so
+    // that a megabyte of article cannot become two megabytes of hex.
+    if let Some(source) = &options.source {
+        if let Some(page) = pages.first_mut() {
+            let payload = encode_source(source);
+            let stream = Stream::new((), &payload).map_err(|e| e.to_string())?;
+            let stream = builder.create(stream).map_err(|e| e.to_string())?;
+            let mut grafeia = Dictionary::new();
+            grafeia.insert(
+                Name::from("Format"),
+                Primitive::String(PdfString::from(SOURCE_FORMAT)),
+            );
+            // `RcRef<Stream>` is a reference to the object it created; that is
+            // what goes in the dictionary.
+            grafeia.insert(Name::from("Source"), Primitive::from(stream));
+            page.other
+                .insert(Name::from(SOURCE_KEY), Primitive::Dictionary(grafeia));
+        }
+    }
+
+    let catalog = CatalogBuilder::from_pages(pages)
+        .build(&mut builder)
+        .map_err(|e| e.to_string())?;
+
+    let mut trailer = Trailer {
+        size: 0,
+        prev_trailer_pos: None,
+        root: builder.create(catalog).map_err(|e| e.to_string())?,
+        encrypt_dict: None,
+        info_dict: builder.info.take(),
+        id: Vec::new(),
+    };
+    builder
+        .storage
+        .save(&mut trailer)
+        .map_err(|e| e.to_string())?;
+    let data: Vec<u8> = builder.storage.into_inner();
+
+    info!("{} pages, {} bytes", columns_len(state), data.len());
+    Ok(data)
+}
+
+/// Write a laid-out document as a PDF at `path`.
+pub fn write_file(state: &State, path: impl AsRef<Path>, options: &Options) -> Result<(), String> {
+    let path = path.as_ref();
+    let data = write(state, options)?;
+    std::fs::write(path, &data).map_err(|e| format!("{}: {}", path.display(), e))?;
     Ok(())
+}
+
+/// The source embedded in a PDF, if it carries one.
+///
+/// This is the other half of [`Options::source`]: the markdown and the style
+/// come back out under the names they went in with, so the file that was set
+/// from them is also the file that can be edited and set again.
+pub fn extract(path: impl AsRef<Path>) -> Result<Source, String> {
+    let path = path.as_ref();
+    let file = FileOptions::cached()
+        .open(path)
+        .map_err(|e| format!("{}: {}", path.display(), e))?;
+    let page = file
+        .get_page(0)
+        .map_err(|e| format!("{}: {}", path.display(), e))?;
+    let what = path.display();
+    let dict = match page.other.get(SOURCE_KEY) {
+        Some(Primitive::Dictionary(dict)) => dict,
+        _ => {
+            return Err(format!(
+                "{}: no grafeia source in it (written with --no-source?)",
+                what
+            ))
+        }
+    };
+    let reference = match dict.get("Source") {
+        Some(Primitive::Reference(reference)) => *reference,
+        _ => return Err(format!("{}: the source has no stream", what)),
+    };
+    let resolver = file.resolver();
+    let stream: RcRef<Stream<()>> = resolver
+        .get(Ref::new(reference))
+        .map_err(|e| format!("{}: {}", what, e))?;
+    let data = stream
+        .data(&resolver)
+        .map_err(|e| format!("{}: {}", what, e))?;
+    decode_source(&data, &what.to_string())
+}
+
+/// The first line of the source stream: what the rest of the bytes mean.
+const SOURCE_FORMAT: &str = "grafeia-source 1";
+
+/// The source as it travels inside the PDF: one line of magic, then each part
+/// as `kind name-length body-length`, the name, and the body.
+fn encode_source(source: &Source) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend(SOURCE_FORMAT.as_bytes());
+    out.push(b'\n');
+    for (kind, name, body) in [
+        ("markdown", &source.markdown_name, &source.markdown),
+        ("style", &source.style_name, &source.style),
+    ] {
+        out.extend(format!("{} {} {}\n", kind, name.len(), body.len()).into_bytes());
+        out.extend(name.as_bytes());
+        out.extend(body.as_bytes());
+        out.push(b'\n');
+    }
+    out
+}
+
+/// The other direction of [`encode_source`]. Lengths, not delimiters, decide
+/// where each part ends: a markdown file may hold anything at all.
+fn decode_source(data: &[u8], what: &str) -> Result<Source, String> {
+    let mut at = 0;
+    let magic = take_line(data, &mut at, what)?;
+    if magic != SOURCE_FORMAT {
+        return Err(format!("{}: `{}` is not a source I know", what, magic));
+    }
+    let mut parts = Vec::new();
+    while at < data.len() {
+        let header = take_line(data, &mut at, what)?;
+        let mut fields = header.split(' ');
+        let kind = fields.next().unwrap_or("");
+        let name_len: usize = fields
+            .next()
+            .and_then(|f| f.parse().ok())
+            .ok_or_else(|| format!("{}: `{}` has no name length", what, header))?;
+        let body_len: usize = fields
+            .next()
+            .and_then(|f| f.parse().ok())
+            .ok_or_else(|| format!("{}: `{}` has no body length", what, header))?;
+        if at + name_len + body_len > data.len() {
+            return Err(format!("{}: `{}` is cut short", what, kind));
+        }
+        let name = std::str::from_utf8(&data[at .. at + name_len])
+            .map_err(|e| format!("{}: {} name: {}", what, kind, e))?
+            .to_string();
+        at += name_len;
+        let body = std::str::from_utf8(&data[at .. at + body_len])
+            .map_err(|e| format!("{}: {}: {}", what, kind, e))?
+            .to_string();
+        at += body_len;
+        if data.get(at) == Some(&b'\n') {
+            at += 1;
+        }
+        parts.push((kind.to_string(), name, body));
+    }
+    let mut source = Source {
+        markdown_name: "document.md".into(),
+        markdown: String::new(),
+        style_name: "style.toml".into(),
+        style: String::new(),
+    };
+    let mut seen_markdown = false;
+    let mut seen_style = false;
+    for (kind, name, body) in parts {
+        match kind.as_str() {
+            "markdown" => {
+                source.markdown_name = name;
+                source.markdown = body;
+                seen_markdown = true;
+            }
+            "style" => {
+                source.style_name = name;
+                source.style = body;
+                seen_style = true;
+            }
+            other => return Err(format!("{}: unknown source part `{}`", what, other)),
+        }
+    }
+    if !seen_markdown || !seen_style {
+        return Err(format!("{}: the source is missing its markdown or style", what));
+    }
+    Ok(source)
+}
+
+fn take_line<'a>(data: &'a [u8], at: &mut usize, what: &str) -> Result<&'a str, String> {
+    let end = data
+        .get(*at ..)
+        .and_then(|rest| rest.iter().position(|&b| b == b'\n'))
+        .ok_or_else(|| format!("{}: the source is cut short", what))?;
+    let line = std::str::from_utf8(&data[*at .. *at + end])
+        .map_err(|e| format!("{}: {}", what, e))?;
+    *at += end + 1;
+    Ok(line)
+}
+
+/// How many pages the layout produced, which is the number the writer emits.
+fn columns_len(state: &State) -> usize {
+    let mut cache = Cache::new();
+    let _ = cache.layout(&state.storage, &state.design, &state.target, state.root);
+    cache.columns.as_ref().map(|c| c.len()).unwrap_or(0)
 }
 
 // ------------------------------------------------------------------ fonts

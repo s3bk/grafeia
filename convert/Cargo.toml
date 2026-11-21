@@ -19,6 +19,9 @@ pathfinder_color = { git = "https://github.com/s3bk/pathfinder/" }
 pathfinder_renderer = { git = "https://github.com/s3bk/pathfinder/" }
 pathfinder_export = { git = "https://github.com/s3bk/pathfinder/" }
 env_logger = "*"
+# The style file. A style is a table of small facts, and a table is what
+# TOML is for.
+toml = "0.8"
 # `pdf` is the reader and writer; the exporter only uses `build` and `content`.
 # Same fork and branch as pdf_render, so both read and write one dialect.
 pdf = { git = "https://github.com/s3bk/pdf.git", branch = "master", default-features = false, features = ["cache"], optional = true }
@@ -44,8 +47,8 @@ path = "src/bin/markdown.rs"
 required-features = ["markdown"]
 
 [[bin]]
-name = "pdf"
-path = "src/bin/pdf/main.rs"
+name = "grafeia"
+path = "src/bin/grafeia.rs"
 required-features = ["pdf"]
 
 [[bin]]

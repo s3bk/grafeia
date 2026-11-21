@@ -1,0 +1,169 @@
+# The Glowpunk article: how "Our AI Future is Glowpunk" is set.
+#
+# Every length is in millimetres. Every type takes from `[types.body]` what it
+# does not say itself, so this file reads as "the running text, and then how
+# each other kind of block differs from it".
+#
+# US Letter, 1.55in side margins, 11pt body on a 17pt line, 137mm measure.
+
+name = "Glowpunk article"
+
+[page]
+description = "US Letter, 1.55in side margins"
+media   = [0.0, 0.0, 215.9, 279.4]     # left, top, width, height
+content = [39.4, 29.2, 137.1, 222.3]
+
+[text]
+dictionary = "en-gb"
+symbols = true                          # "five-person" is one word
+numbers = false                         # margin numbers: --numbers turns them on
+
+[fonts]
+# Relative to this file.
+inter = "Inter-Regular.otf"
+inter-italic = "Inter-Italic.otf"
+gothic = "URWGothic-Demi.otf"
+
+# The running text.
+[types.body]
+font = "inter"
+size = 3.88                             # 11pt
+line-height = 6.0                       # 17pt
+word-space = [0.60, 1.00, 1.80]         # shrink, length, stretch
+display = "paragraph"
+below = 3.6
+
+# The root: it holds the blocks and is not text of its own.
+[types.document]
+display = "inline"
+
+[types.masthead]
+font = "gothic"
+size = 3.2
+line-height = 4.0
+word-space = [0.6, 0.9, 2.2]
+display = "block"
+below = 3.2
+
+[types.title]
+font = "gothic"
+size = 14.0
+line-height = 14.6
+word-space = [2.4, 3.2, 5.0]
+indent = 0.0
+hyphen = false
+display = "block"
+below = 3.2
+
+[types.subtitle]
+font = "inter"
+size = 5.3
+line-height = 7.0
+display = "block"
+below = 5.0
+
+[types.byline]
+font = "gothic"
+size = 3.0
+line-height = 3.6
+display = "block"
+below = 1.2
+
+[types.author]
+font = "inter"
+size = 4.6
+line-height = 6.0
+display = "block"
+below = 0.2
+
+[types.email]
+font = "inter"
+size = 3.88
+line-height = 5.0
+hyphen = false
+display = "block"
+below = 2.0
+
+# The ornamental rule: a drawing, not text, scaled to the measure.
+[types.rule]
+svg = """<svg xmlns="http://www.w3.org/2000/svg" width="200" height="2.4" viewBox="0 0 200 2.4"><rect x="0" y="0" width="200" height="2.4" fill="#b8541e"/></svg>"""
+svg-width = 50.8
+
+[types.kicker]
+font = "gothic"
+size = 3.4
+line-height = 4.2
+hyphen = false
+keep-with-next = true
+display = "block"
+above = 9.0
+below = 0.8
+
+[types.heading]
+font = "gothic"
+size = 6.0
+line-height = 7.0
+word-space = [1.2, 1.6, 3.0]
+hyphen = false
+keep-with-next = true
+display = "block"
+above = 9.5
+below = 4.2
+# A heading that directly follows a kicker has already had its space above it.
+with-kicker = "heading-kicker"
+
+[types.heading-kicker]
+font = "gothic"
+size = 6.0
+line-height = 7.0
+word-space = [1.2, 1.6, 3.0]
+hyphen = false
+keep-with-next = true
+display = "block"
+above = 1.0
+below = 4.2
+
+[types.subheading]
+font = "gothic"
+size = 4.1
+line-height = 5.2
+hyphen = false
+keep-with-next = true
+display = "block"
+above = 5.5
+below = 2.0
+
+[types.paragraph]
+above = 0.0
+below = 3.6
+
+[types.lead]
+font = "inter-italic"
+size = 3.88
+display = "inline"
+
+[types.list-item]
+indent = 0.0
+below = 2.2
+
+# The forced break writes nothing: the type carries the demand to start a fresh
+# page, and the break merges into the break point already between the blocks.
+[types.pagebreak]
+display = "inline"
+break-before = true
+
+# The space left in the column, so what follows comes to rest at the foot.
+[types.vfill]
+display = "inline"
+vertical-fill = true
+
+# Paragraph numbers: small, in the outer margin, hung off the text edge and
+# taking no width. They start a quarter of the side margin out from the text
+# edge, which leaves them a clear column of their own, lined up on the left.
+[types.paragraph-number]
+font = "gothic"
+size = 2.98
+line-height = 6.0
+hyphen = false
+margin-hang = 9.85
+display = "inline"
