@@ -12,6 +12,8 @@
 
 %email pete@isecom.org
 
+\pagebreak
+
 # The Shape
 
 Glowpunk is the opposite of cyberpunk. Cyberpunk is the neon megacity you rent a capsule in, your life streamed through someone else’s wire. Glowpunk is the workshop lit up on your block, machinery humming, owned by the person inside it who is making the thing they actually want to make. Local. Owned. Human-scale. Not off-grid, not rural fantasy, not utopia. Just the small operator with real capability, in a real town, serving customers who can look them in the eye. That is the future this piece is about.

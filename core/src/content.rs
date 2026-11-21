@@ -200,7 +200,12 @@ pub enum Item {
     Word(WordId),
     Symbol(SymbolId),
     Sequence(SequenceId),
-    Object(ObjectId)
+    Object(ObjectId),
+
+    /// A word set into the left margin: it takes no width in the measure (the
+    /// line breaking does not see it) and is painted to the left of the text
+    /// edge, ending as far before it as the type's `margin_gap` says.
+    Margin(WordId)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -295,6 +300,19 @@ pub struct TypeDesign {
     pub dictionary:     DictId,
     pub hyphen:         Option<SymbolId>,
     pub indent:         Length,
+
+    /// Penalty for a column break inside this element and directly after it.
+    /// Negative values keep the element together with what follows, so a
+    /// heading that carries a large negative penalty is never left alone at
+    /// the foot of a page.
+    pub column_break_penalty: f32,
+
+    /// Start this element at the top of a new column: a forced page break.
+    pub column_break_before: bool,
+
+    /// How far a word hung into the margin (`Item::Margin`) ends before the
+    /// text edge.
+    pub margin_gap: Length,
 }
 
 pub enum VerticalAlign {

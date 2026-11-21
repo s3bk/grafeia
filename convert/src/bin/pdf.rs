@@ -20,6 +20,22 @@ use grafeia_core::draw::{
 
 
 use std::fmt;
+/// PDF user space is points — 72 to the inch — and the layout is in
+/// millimetres, so every box that reaches the page dictionary has to be
+/// scaled.
+const PT_PER_MM: f32 = 72.0 / 25.4;
+
+struct PdfPoints(RectF);
+impl fmt::Display for PdfPoints {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let ll = self.0.lower_left();
+        let ur = self.0.upper_right();
+        write!(f, "[{} {} {} {}]",
+            ll.x().min(ur.x()) * PT_PER_MM, ll.y().min(ur.y()) * PT_PER_MM,
+            ll.x().max(ur.x()) * PT_PER_MM, ll.y().max(ur.y()) * PT_PER_MM)
+    }
+}
+
 struct PdfRect(RectF);
 impl fmt::Display for PdfRect {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -214,11 +230,11 @@ impl Pdf {
     pub fn render_page(&mut self, cache: &Cache, storage: &Storage, target: &Target, design: &Design, column: Column) {
         let content_box: RectF = target.content_box.into();
         let media_box: RectF = target.media_box.into();
-        self.page_height = media_box.height();
+        self.page_height = media_box.height() * PT_PER_MM;
         let mut stream = Stream::new();
-        // Top-down layout coordinates into PDF's bottom-left origin: flip y about
-        // the top edge of the media box.
-        writeln!(stream.0, "1 0 0 -1 0 {} cm", self.page_height);
+        // Millimetres into points, and top-down layout coordinates into PDF's
+        // bottom-left origin: scale, then flip y about the top edge.
+        writeln!(stream.0, "{} 0 0 -{} 0 {} cm", PT_PER_MM, PT_PER_MM, self.page_height);
 
         for (y, line) in column {
             for (x, size, item, tag) in line {
@@ -283,8 +299,8 @@ impl Pdf {
 /Resources 3 0 R
 /Contents {} 0 R
 >>\n",
-        PdfRect(target.media_box.into()),
-                PdfRect(target.trim_box.into()),
+        PdfPoints(target.media_box.into()),
+                PdfPoints(target.trim_box.into()),
                 stream_object_id
         ).into_bytes();
         self.add_object(page_object, true, false);

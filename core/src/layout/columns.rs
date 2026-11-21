@@ -1,4 +1,4 @@
-use super::{Entry, StreamVec, FlexMeasure, ItemMeasure};
+use super::{Entry, StreamVec, FlexMeasure, ItemMeasure, Glue};
 //use layout::style::{Style};
 use crate::units::{Length, Size};
 use std::fmt::{self, Debug};
@@ -43,7 +43,19 @@ pub struct ParagraphLayout {
 pub struct ColumnLayout {
     para:       ParagraphLayout,
     nodes_col:  Vec<Option<ColumnBreak>>,
-    height:     Length
+    height:     Length,
+    // how many lines of its own paragraph are there before / after a break
+    // point: one of them alone at a column edge is a widow or an orphan.
+    before:     Vec<u16>,
+    after:      Vec<u16>,
+    // the penalty carried by the break that opened a break point's paragraph:
+    // a heading passes its own "keep with what follows" on to the paragraph
+    // underneath it, which then needs two lines at the foot of the column.
+    guard:      Vec<f32>,
+    // the same for the paragraph that ends at a break point
+    close_guard: Vec<f32>,
+    // lines in the paragraph a break point belongs to
+    total:      Vec<u16>,
 }
 impl Debug for ColumnLayout {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -263,6 +275,7 @@ impl ColumnLayout {
         });
         nodes_col[0] = Some(ColumnBreak::default());
 
+        let len = items.0.len();
         let mut layout = ColumnLayout {
             para: ParagraphLayout {
                 nodes,
@@ -271,6 +284,11 @@ impl ColumnLayout {
             },
             nodes_col,
             height,
+            before: vec![1; len + 1],
+            after: vec![1; len + 1],
+            guard: vec![0.0; len + 1],
+            close_guard: vec![0.0; len + 1],
+            total: vec![1; len + 1],
         };
         layout.run();
         layout
@@ -279,6 +297,8 @@ impl ColumnLayout {
         Columns::new(self)
     }
     fn run(&mut self) {
+        // Break every line first: the column pass needs to know, for any break
+        // point, how many lines of its paragraph lie before and after it.
         let mut last = 0;
         for start in 0 .. self.para.items.len() {
             match self.para.nodes[start] {
@@ -287,12 +307,23 @@ impl ColumnLayout {
                         start,
                         Context::new(start, b.score, b.indent, b.width)
                     );
-                    self.compute_column(start, false);
                 },
                 None => {}
             }
         }
-        self.compute_column(last, true);
+        self.compute_paragraph_lines();
+
+        // Every column break is looked for twice: first with the widow,
+        // orphan and heading rules as hard requirements, and only where that
+        // leaves nothing at all, with them as penalties instead.
+        for strict in [true, false] {
+            for start in 0 ..= self.para.items.len() {
+                if self.para.nodes[start].is_none() || self.nodes_col[start].is_some() {
+                    continue;
+                }
+                self.compute_column(start, strict, start == last);
+            }
+        }
 
         if self.nodes_col[last].is_none() {
             for i in 0 .. last {
@@ -312,66 +343,179 @@ impl ColumnLayout {
     fn num_lines_penalty(&self, n: usize) -> f32 {
         match n {
            // 0 => -100.0,
-            1 => -20.0,
+            // one line of a paragraph alone at a column edge: the last line
+            // must not wrap on its own, and neither may the first one stay
+            // behind on its own.
+            1 => -500.0,
             _ => 0.0
         }
     }
+    /// How much an underfull column costs. Calibrated against the widow and
+    /// orphan penalties: leaving a column half empty costs about as much as
+    /// leaving a single line alone, so the layout trades one for the other
+    /// only when the hole would be enormous.
     fn fill_penalty(&self, fill: Length) -> f32 {
-        -10.0 * ((self.height - fill) / self.height)
+        -2000.0 * ((self.height - fill) / self.height)
     }
 
-    fn compute_column(&mut self, n: usize, is_last: bool) -> bool {
+    /// For every break point: how many lines of the paragraph it belongs to
+    /// are there before it and after it. Both ends of a column need two of
+    /// them, never one.
+    fn compute_paragraph_lines(&mut self) {
+        let len = self.para.items.len();
+        let mut end_of_line = vec![None; len + 1];
+        for m in 0 ..= len {
+            if let Some(b) = self.para.nodes[m] {
+                if b.prev < m {
+                    end_of_line[b.prev] = Some(m);
+                }
+            }
+        }
+
+        // A line continues in its paragraph after a word space, and after a
+        // hyphenation break — the latter carries no column break, so it is not
+        // the end of anything.
+        let continues = |items: &[Entry], m: usize| m > 0 && matches!(
+            items[m - 1],
+            Entry::Space(..) | Entry::Linebreak(_, _, None)
+        );
+
+        let mut before = vec![1u16; len + 1];
+        for n in 1 ..= len {
+            if let Some(b) = self.para.nodes[n] {
+                if continues(&self.para.items, n) {
+                    before[n] = before[b.prev].saturating_add(1);
+                }
+            }
+        }
+
+        let mut after = vec![1u16; len + 1];
+        for n in (1 ..= len).rev() {
+            if self.para.nodes[n].is_none() {
+                continue;
+            }
+            after[n] = match end_of_line[n] {
+                Some(m) if continues(&self.para.items, m) => after[m].saturating_add(1),
+                _ => 1,
+            };
+        }
+
+        let mut guard = vec![0.0f32; len + 1];
+        let mut close_guard = vec![0.0f32; len + 1];
+        let mut total = vec![1u16; len + 1];
+        let mut opened_by = 0.0f32;
+        let mut start = 0usize;
+        for n in 1 ..= len {
+            total[n] = after[start].max(1);
+            if let Entry::Linebreak(_, _, Some(column_break)) = self.para.items[n - 1] {
+                // the paragraph that ends here was opened by this
+                close_guard[n] = opened_by;
+                opened_by = column_break.min(0.0);
+                start = n;
+            }
+            guard[n] = opened_by;
+        }
+
+        self.before = before;
+        self.after = after;
+        self.guard = guard;
+        self.close_guard = close_guard;
+        self.total = total;
+    }
+
+    /// Whether a column that starts at this break point leaves a single line
+    /// of a paragraph alone at one of its edges, or a heading with a single
+    /// line under it.
+    fn leaves_one_line(&self, last: usize) -> bool {
+        if last == 0 {
+            return false;
+        }
+        match self.para.items[last - 1] {
+            // one line of the paragraph on either side of the break, or the
+            // single line of a paragraph that opened under a heading
+            Entry::Space(..) => self.before[last] == 1
+                || self.after[last] == 1
+                || (self.guard[last] < 0.0 && self.before[last] == 1),
+            // a heading left with a one-line paragraph under it
+            Entry::Linebreak(..) => self.total[last] == 1 && self.close_guard[last] < 0.0,
+            _ => false,
+        }
+    }
+
+    fn compute_column(&mut self, n: usize, strict: bool, is_last: bool) -> bool {
         //                                        measure:
-        let mut num_lines_before_end = 0;      // - lines before the break; reset between paragraphs
-        let mut num_lines_at_last_break = 0;   // - lines after the previous break; count until the last paragraph starts
-        let mut is_last_paragraph = true;
         let mut height = Length::zero();
         let mut last = n;
         let mut found = false;
-        
+
         // walk backwards
         loop {
             let last_node = self.para.nodes[last].unwrap();
-            
+
             let penalty = if last > 0 {
                 let penalty = match self.para.items[last-1] {
                     Entry::Linebreak(_, skip, col_break) => {
-                        is_last_paragraph = false;
-                        num_lines_before_end = 0;
                         height += skip;
                         col_break
                     },
-                    Entry::Space(_, _, col_break) => {
-                        num_lines_before_end += 1;
-
-                        if is_last_paragraph {
-                            num_lines_at_last_break += 1;
-                        }
-                        col_break
-                    }
+                    Entry::Space(_, _, col_break) => col_break,
+                    Entry::Column => Some(Glue::PAGE_BREAK),
                     ref e => panic!("found: {:?}", e)
                 };
-                
+
                 height += last_node.height;
 
                 if height > self.height {
                     break;
                 }
-                
+
                 penalty
             } else {
                 Some(0.0)
             };
 
+            if strict && self.leaves_one_line(last) {
+                if last == 0 {
+                    break;
+                }
+                last = last_node.prev;
+                continue;
+            }
+
             if let (Some(penalty), Some(column)) = (penalty, self.nodes_col[last]) {
-                let mut score = column.score + penalty
-                    + self.num_lines_penalty(num_lines_at_last_break)
-                    + self.num_lines_penalty(num_lines_before_end);
-                
+                let mut score = column.score + penalty;
+
+                // A paragraph may not leave a single line alone at a column
+                // edge: one line at the foot of the page (orphan) and one at
+                // the top of the next (widow) both break the reading.
+                if last > 0 {
+                    match self.para.items[last-1] {
+                        Entry::Space(..) => {
+                            score += self.num_lines_penalty(self.before[last] as usize)
+                                + self.num_lines_penalty(self.after[last] as usize);
+
+                            if self.before[last] == 1 {
+                                // the paragraph opened under a heading that
+                                // keeps with what follows: one line of it is
+                                // not enough company
+                                score += self.guard[last];
+                            }
+                        }
+                        Entry::Linebreak(..) => {
+                            // a heading may not be left with a one-line
+                            // paragraph under it either
+                            if self.total[last] == 1 {
+                                score += self.close_guard[last];
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
                 if !is_last {
                     score += self.fill_penalty(height);
                 }
-            
+
                 match self.nodes_col[n] {
                     Some(column) if column.score > score => {},
                     _ => {
@@ -379,7 +523,7 @@ impl ColumnLayout {
                             prev: last,
                             score: score
                         });
-                        
+
                         found = true;
                     }
                 }
@@ -390,7 +534,7 @@ impl ColumnLayout {
             }
             last = last_node.prev;
         }
-        
+
         found
     }
 }

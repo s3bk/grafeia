@@ -25,6 +25,27 @@ impl Glue {
             height
         }
     } 
+
+    /// A fill break with a column-break penalty of its own: a negative value
+    /// keeps an element with what follows, a large positive one demands the
+    /// break (a page break the layout may not reason its way out of).
+    pub fn hfill_with(height: Length, column_break: f32) -> Glue {
+        Glue::Newline {
+            fill: true,
+            column_break: Some(column_break),
+            height
+        }
+    }
+
+    /// Demand a page break at the next break point. Expressed as a penalty
+    /// rather than a separate entry, so it merges into the break that is
+    /// already there: no empty line and no blank page.
+    pub fn page_break() -> Glue {
+        Glue::hfill_with(Length::zero(), Glue::PAGE_BREAK)
+    }
+
+    /// Big enough to outweigh every other penalty in the block algorithm.
+    pub const PAGE_BREAK: f32 = 500_000.0;
 }
 
 fn merge_break(a: Option<f32>, b: Option<f32>) -> Option<f32> {

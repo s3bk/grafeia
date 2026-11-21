@@ -112,7 +112,10 @@ pub fn build() -> State<'static> {
         line_height: Length::mm(5.0),
         indent:      Length::zero(),
         hyphen: Some(hyphen),
-        dictionary
+        dictionary,
+        column_break_penalty: 0.0,
+        column_break_before: false,
+        margin_gap: Length::zero(),
     };
 
     
@@ -138,7 +141,10 @@ pub fn build() -> State<'static> {
             line_height: Length::mm(10.0),
             indent:      Length::zero(),
             hyphen: None,
-            dictionary
+            dictionary,
+            column_break_penalty: 0.0,
+            column_break_before: false,
+            margin_gap: Length::zero(),
         }
     );
     design.set_type(
@@ -163,7 +169,10 @@ pub fn build() -> State<'static> {
             line_height: Length::mm(5.0),
             indent:      Length::zero(),
             hyphen: Some(hyphen),
-            dictionary
+            dictionary,
+            column_break_penalty: 0.0,
+            column_break_before: false,
+            margin_gap: Length::zero(),
         }
     );
 

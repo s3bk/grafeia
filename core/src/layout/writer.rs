@@ -169,10 +169,12 @@ impl Writer {
     // much faster variant, but expects exactly count branches (calls to f)
     pub fn branch2(&mut self, count: usize, f: impl FnOnce(&mut Gen2)) {
         self.branch_stack.init(count);
+        let state = self.state;
         f(&mut Gen2 {
             writer: self,
             count,
-            at: 0
+            at: 0,
+            state
         });
         self.branch_stack.finish(&mut self.stream);
     }
@@ -183,11 +185,17 @@ pub struct Gen2<'a> {
     writer: &'a mut Writer,
     count: usize,
     at: usize,
+    /// The glue state at the branch entry. Every alternative starts from it:
+    /// without this, the glue at the end of one alternative would be merged
+    /// into the first item of the next, and a word alternative that ends in a
+    /// space would give the hyphenated alternative a space it never asked for.
+    state: Glue,
 }
 impl<'a> Gen2<'a> {
     pub fn add(&mut self, f: impl FnOnce(&mut Writer)) {
         assert!(self.at < self.count);
         self.writer.branch_stack.step(&mut self.writer.stream);
+        self.writer.state = self.state;
         f(self.writer);
         self.at += 1;
     }

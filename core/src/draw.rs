@@ -156,7 +156,7 @@ impl Cache {
         let space = Glue::Space {
             measure: ctx.type_design.word_space,
             line_break: Some(0.0),
-            column_break: Some(-1.0)
+            column_break: Some(-1.0 + ctx.type_design.column_break_penalty)
         };
         
         let hyphen_glue = Glue::Newline {
@@ -209,10 +209,22 @@ impl Cache {
         }
     }
 
-    fn render_symbol(&mut self, writer: &mut Writer, ctx: &DrawCtx, tag: Tag, key: SymbolId) {
-        let symbol = ctx.storage.get_symbol(key);
+    /// Text that hangs in the left margin. It adds nothing to the measure, so
+    /// the line breaking is untouched and the line it starts is laid out
+    /// exactly as if the margin text were not there.
+    fn render_margin(&mut self, writer: &mut Writer, ctx: &DrawCtx, tag: Tag, key: WordId) {
         let font = ctx.type_design.font;
-        let space = Glue::Space { measure: ctx.type_design.word_space, line_break: Some(0.0), column_break: Some(0.0) };
+        let mut measure = self.measure_word_part(ctx, tag, font, key, &ctx.storage.get_word(key).text, WordPart::Full);
+        let hang = measure.content + FlexMeasure::fixed(ctx.type_design.margin_gap);
+        measure.left = hang;
+        measure.content = hang;
+        measure.right = FlexMeasure::zero();
+        writer.item(Glue::None, Glue::None, measure, RenderItem::Word(key, WordPart::Full, font), tag);
+    }
+
+    fn render_symbol(&mut self, writer: &mut Writer, ctx: &DrawCtx, tag: Tag, key: SymbolId) {        let symbol = ctx.storage.get_symbol(key);
+        let font = ctx.type_design.font;
+        let space = Glue::Space { measure: ctx.type_design.word_space, line_break: Some(0.0), column_break: Some(ctx.type_design.column_break_penalty) };
         let width = Length::mm(self.symbol_layout(key, &ctx.storage, font).advance.x());
         writer.item(
             select(symbol.trailing, Glue::None, space),
@@ -232,6 +244,7 @@ impl Cache {
         match item {
             Item::Word(key) => self.render_word(writer, ctx, tag, key),
             Item::Symbol(key) => self.render_symbol(writer, ctx, tag, key),
+            Item::Margin(key) => self.render_margin(writer, ctx, tag, key),
             Item::Object(key) => {
                 let obj = ctx.storage.get_object(key);
                 let ctx = ObjectCtx {
@@ -257,6 +270,9 @@ impl Cache {
         let weave = ctx.storage.get_weave(seq_id);
         let type_design = ctx.design.get_type_or_default(weave.typ());
 
+        if type_design.column_break_before {
+            writer.promote(Glue::page_break());
+        }
         match type_design.display {
             Display::Block(v) => writer.promote(Glue::hfill(v.above)),
             Display::Paragraph(indent, v) => writer.space(Glue::hfill(v.above), Glue::None, FlexMeasure::fixed(indent), None, None),
@@ -285,7 +301,9 @@ impl Cache {
         writer.item(Glue::None, Glue::any(), measure, RenderItem::Empty, Tag::End(seq_id));
 
         match type_design.display {
-            Display::Block(v) | Display::Paragraph(_, v) => writer.promote(Glue::hfill(v.below)),
+            Display::Block(v) | Display::Paragraph(_, v) => {
+                writer.promote(Glue::hfill_with(v.below, type_design.column_break_penalty))
+            }
             _ => {}
         }
         if !type_design.indent.is_zero() {

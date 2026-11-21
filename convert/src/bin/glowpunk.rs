@@ -17,6 +17,10 @@ use std::borrow::Cow;
 use std::fs::File;
 use std::io::BufWriter;
 
+/// A heading must never be left alone at the foot of a page, nor with a
+/// single line of a heading that has more than one.
+const KEEP_WITH_NEXT: f32 = -50000.0;
+
 /// Fonts travel with the repository: Inter for the running text and URW Gothic
 /// Demi for the display type, both freely redistributable.
 macro_rules! font {
@@ -34,6 +38,9 @@ enum Block {
     Author(String),
     Email(String),
     Rule,
+    /// A forced page break: nothing but the demand that what follows starts on
+    /// a fresh page.
+    Break,
     Kicker(String),
     Heading(String),
     Subheading(String),
@@ -80,6 +87,9 @@ fn parse(input: &str) -> Vec<Block> {
         } else if let Some(rest) = line.strip_prefix("# ") {
             flush(&mut paragraph, &mut blocks);
             blocks.push(Block::Heading(rest.trim().into()));
+        } else if line == "\\pagebreak" {
+            flush(&mut paragraph, &mut blocks);
+            blocks.push(Block::Break);
         } else if let Some(rest) = line.strip_prefix("+ ") {
             flush(&mut paragraph, &mut blocks);
             blocks.push(Block::ListItem(rest.trim().into()));
@@ -106,11 +116,16 @@ fn split_lead(text: &str) -> (Option<&str>, &str) {
 fn main() {
     env_logger::init();
 
-    let mut args = std::env::args().skip(1);
-    let input = std::fs::read_to_string(args.next().expect("no input file given"))
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let flags: Vec<&str> = args.iter().filter(|a| a.starts_with("--")).map(|a| a.as_str()).collect();
+    let mut files = args.iter().filter(|a| !a.starts_with("--"));
+    let input = std::fs::read_to_string(files.next().expect("no input file given"))
         .expect("can't read input file");
-    let output = File::create(args.next().expect("no output file given"))
-        .expect("can't create output file");
+    let output_path = files.next().expect("no output file given").clone();
+    // numbers in the left margin, to talk about paragraphs
+    let numbers = flags.contains(&"--numbers");
+    // print the laid out columns as text, one line per line
+    let dump = flags.contains(&"--dump");
 
     let blocks = parse(&input);
 
@@ -149,6 +164,8 @@ fn main() {
     let paragraph_typ = document.create_type("paragraph", Type::new("Paragraph"));
     let lead_typ = document.create_type("lead", Type::new("Italic lead-in"));
     let list_item_typ = document.create_type("list-item", Type::new("List item"));
+    let pagebreak_typ = document.create_type("pagebreak", Type::new("Forced page break"));
+    let para_number_typ = document.create_type("paragraph-number", Type::new("Paragraph number in the margin"));
 
     let inter = document.add_font(font!("Inter-Regular.otf").to_vec());
     let inter_italic = document.add_font(font!("Inter-Italic.otf").to_vec());
@@ -185,6 +202,9 @@ fn main() {
         indent: Length::zero(),
         dictionary,
         hyphen: Some(hyphen),
+        column_break_penalty: 0.0,
+        column_break_before: false,
+        margin_gap: Length::zero(),
     };
 
     let mut design = Design::new("Glowpunk article".into(), body.clone());
@@ -291,6 +311,7 @@ fn main() {
     design.set_type(
         kicker_typ,
         TypeDesign {
+            column_break_penalty: KEEP_WITH_NEXT,
             display: block(9.0, 0.8),
             font: Font {
                 font_face: gothic,
@@ -304,6 +325,7 @@ fn main() {
     design.set_type(
         heading_typ,
         TypeDesign {
+            column_break_penalty: KEEP_WITH_NEXT,
             display: block(9.5, 4.2),
             font: Font {
                 font_face: gothic,
@@ -322,6 +344,7 @@ fn main() {
     design.set_type(
         heading_kicker_typ,
         TypeDesign {
+            column_break_penalty: KEEP_WITH_NEXT,
             display: block(1.0, 4.2),
             font: Font {
                 font_face: gothic,
@@ -340,6 +363,7 @@ fn main() {
     design.set_type(
         subheading_typ,
         TypeDesign {
+            column_break_penalty: KEEP_WITH_NEXT,
             display: block(5.5, 2.0),
             font: Font {
                 font_face: gothic,
@@ -376,8 +400,37 @@ fn main() {
         },
     );
 
+    // The forced break writes nothing: the type carries the demand, and the
+    // break merges into the break point that is already between the blocks.
+    design.set_type(
+        pagebreak_typ,
+        TypeDesign {
+            display: Display::Inline,
+            column_break_before: true,
+            ..body.clone()
+        },
+    );
+    // Paragraph numbers: small, in the outer margin, hung off the text edge and
+    // taking no width, so the line they start is laid out as if they were not
+    // there.
+    design.set_type(
+        para_number_typ,
+        TypeDesign {
+            display: Display::Inline,
+            font: Font {
+                font_face: gothic,
+                size: Length::mm(2.98),
+            },
+            line_height: Length::mm(6.0),
+            hyphen: None,
+            margin_gap: Length::mm(1.6),
+            ..body.clone()
+        },
+    );
+
     let mut items = vec![];
     let mut nr = 1;
+    let mut para_nr = 0;
     let mut prev_was_kicker = false;
     for block in blocks {
         let mut seq_items: Vec<Item> = vec![];
@@ -400,6 +453,7 @@ fn main() {
                 items.push(Item::Object(key));
                 continue;
             }
+            Block::Break => { prev_was_kicker = false; pagebreak_typ },
             Block::Kicker(t) => { seq_items.extend(document.create_text(&t.to_uppercase())); prev_was_kicker = true; kicker_typ },
             Block::Heading(t) => {
                 seq_items.extend(document.create_text(&t));
@@ -413,6 +467,15 @@ fn main() {
             Block::Subheading(t) => { prev_was_kicker = false; seq_items.extend(document.create_text(&t)); subheading_typ },
             Block::Paragraph(t) => {
                 prev_was_kicker = false;
+                para_nr += 1;
+                if numbers {
+                    let number = document.create_word(&para_nr.to_string());
+                    let number_seq = document.creat_seq_with_items(
+                        para_number_typ,
+                        vec![Item::Margin(number)],
+                    );
+                    seq_items.push(Item::Sequence(number_seq));
+                }
                 match split_lead(&t) {
                     (Some(lead), rest) => {
                         let lead_items: Vec<Item> = document.create_text(lead).collect();
@@ -470,5 +533,51 @@ fn main() {
         target: Cow::Owned(target),
         root,
     };
+    if dump {
+        dump_lines(&state);
+    }
+
+    let output = File::create(output_path).expect("can't create output file");
     state.store(BufWriter::new(output)).unwrap();
+}
+
+/// Print the laid out columns as text, one line per line. This is how a
+/// heading left at the foot of a page, a one-line widow or a stray space is
+/// found without reading the rendered pages.
+fn dump_lines(state: &State<'_>) {
+    use grafeia_core::draw::{Cache, RenderItem, WordPart};
+
+    let mut cache = Cache::new();
+    cache.layout(&state.storage, &state.design, &state.target, state.root);
+
+    for (nr, column) in cache.columns.as_ref().unwrap().columns().enumerate() {
+        println!("--- column {}", nr + 1);
+        for (_y, line) in column {
+            let mut text = String::new();
+            let mut end = Length::zero();
+            for (x, size, item, _tag) in line {
+                if !text.is_empty() && x - end > Length::mm(0.4) {
+                    text.push(' ');
+                }
+                match item {
+                    RenderItem::Word(key, WordPart::Before(i), _) => {
+                        let word = &state.storage.get_word(key).text;
+                        text.push_str(&word[.. i as usize]);
+                    }
+                    RenderItem::Word(key, WordPart::After(i), _) => {
+                        let word = &state.storage.get_word(key).text;
+                        text.push_str(&word[i as usize ..]);
+                    }
+                    RenderItem::Word(key, _, _) => {
+                        text.push_str(&state.storage.get_word(key).text)
+                    }
+                    RenderItem::Symbol(key, _) => text.push_str(&state.storage.get_symbol(key).text),
+                    RenderItem::Object(_) => text.push_str("<object>"),
+                    RenderItem::Empty => {}
+                }
+                end = x + size.width;
+            }
+            println!("{}", text.trim_end());
+        }
+    }
 }

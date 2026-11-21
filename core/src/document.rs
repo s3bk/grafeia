@@ -325,6 +325,7 @@ impl Storage {
         let weave = self.weaves.get(id).unwrap();
         let item = |item: Item| match item {
             Item::Word(key) => self.words.get(key).unwrap().text.as_str(),
+            Item::Margin(key) => self.words.get(key).unwrap().text.as_str(),
             Item::Symbol(key) => self.symbols.get(key).unwrap().text.as_str(),
             Item::Sequence(_) => "<seq>",
             Item::Object(_) => "<obj>",
