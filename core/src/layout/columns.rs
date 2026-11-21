@@ -172,7 +172,8 @@ impl ParagraphLayout {
                 Entry::Space(s, Some(penalty), _) => {
                     // breaking case:
                     // width is not added yet!
-                    self.maybe_update(&c, n+1, penalty);
+                    let last_line = self.ends_paragraph(n+1);
+                    self.maybe_update(&c, n+1, penalty, last_line);
                     last = n+1;
                     
                     // add width now.
@@ -182,18 +183,23 @@ impl ParagraphLayout {
                     c.add_space(s);
                 }
 
-                Entry::Linebreak(fill, _, _, _) => {
+                Entry::Linebreak(fill, _, _, column_break) => {
                     if fill {
                         c.fill(c.width);
                     }
                     
-                    self.maybe_update(&c, n+1, 0.0);
+                    // A block break (one that carries a column penalty) ends
+                    // its paragraph with this line; a hyphen's own newline
+                    // only ends the line, the paragraph goes on.
+                    self.maybe_update(&c, n+1, 0.0, column_break.is_some());
                     last = n+1;
                     break;
                 },
 
                 Entry::Column => {
-                    self.maybe_update(&c, n+1, 0.0);
+                    // A column break splits the line, not the paragraph: more
+                    // text of it follows in the next column.
+                    self.maybe_update(&c, n+1, 0.0, false);
                     last = n+1;
                     break;
                 }
@@ -237,12 +243,60 @@ impl ParagraphLayout {
         last
     }
 
-    fn maybe_update(&mut self, c: &Context, n: usize, penalty: f32) {
-        let (factor, score) = match c.line().factor(c.width) {
-            Some(factor) => (factor, -factor * factor),
-            None => (1.0, -1000.)
-        };
+    /// The line that ends at entry `n` is the paragraph's last one when no
+    /// more text follows: only glue, the sequence markers, and at most one
+    /// line break that closes the paragraph.
+    fn ends_paragraph(&self, n: usize) -> bool {
+        for e in &self.items[n..] {
+            match *e {
+                Entry::Item(_, RenderItem::Empty, _) | Entry::Space(..) | Entry::SetWidth(..) => {},
+                // Only a block break ends a paragraph. A hyphen's newline
+                // (no column penalty) closes a line inside one.
+                Entry::Linebreak(_, _, _, Some(_)) => return true,
+                _ => return false
+            }
+        }
 
+        true
+    }
+
+    /// How good it is to end the line here: the flex factor the line ends up
+    /// with, and its score. A line that can be brought to the measure is best
+    /// when it fits exactly (factor 0) and worse the further it is stretched
+    /// or squeezed (-factor²).
+    ///
+    /// A line that cannot be brought to the measure at all is not simply
+    /// forbidden. A paragraph whose words do not happen to fit has to be
+    /// broken somewhere, and with every break marked impossible they all cost
+    /// the same: the break that comes first wins, which is how a line ended up
+    /// broken after two words. Such a line always costs more than any line
+    /// that fits, but among themselves the breaks are ordered by the gap they
+    /// leave, measured against a tenth of the measure.
+    ///
+    /// The last line of a paragraph is exempt from the gap: it is meant to be
+    /// short.
+    fn score(&self, c: &Context, last_line: bool) -> (f32, f32) {
+        let line = c.line();
+        if let Some(factor) = line.factor(c.width) {
+            return (factor, -factor * factor);
+        }
+
+        let short = c.width > line.stretch;
+        if last_line && short {
+            return (1.0, 0.0);
+        }
+
+        let gap = if short {
+            c.width.value - line.stretch.value
+        } else {
+            line.shrink.value - c.width.value
+        };
+        let excess = gap / (c.width.value * 0.1);
+        (if short { 1.0 } else { -1.0 }, -1000.0 - 100.0 * excess * excess)
+    }
+
+    fn maybe_update(&mut self, c: &Context, n: usize, penalty: f32, last_line: bool) {
+        let (factor, score) = self.score(c, last_line);
         let break_score = c.score + score + penalty;
         let break_point = LineBreak {
             factor: factor,
@@ -313,6 +367,8 @@ impl ColumnLayout {
             }
         }
         self.compute_paragraph_lines();
+
+
 
         // Every column break is looked for twice: first with the widow,
         // orphan and heading rules as hard requirements, and only where that
@@ -711,5 +767,83 @@ impl<'a> Iterator for Line<'a> {
         }
         
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::content::Tag;
+    use crate::content::Font;
+    use crate::draw::WordPart;
+    use crate::document::{FontId, WordId, SequenceId, SiteId, Id, Stamped};
+    use crate::draw::RenderItem;
+    use crate::units::Length;
+
+    fn space() -> FlexMeasure {
+        FlexMeasure { shrink: Length::mm(0.6), stretch: Length::mm(1.8), length: Length::mm(1.0) }
+    }
+
+    /// A paragraph of `words` words of `word` width, closed by the fill break
+    /// every paragraph ends with.
+    fn paragraph(words: usize, word: Length) -> StreamVec {
+        let mut items = Vec::new();
+        for i in 0..words {
+            if i > 0 {
+                items.push(Entry::Space(space(), Some(0.0), Some(0.0)));
+            }
+
+            items.push(Entry::Item(
+                ItemMeasure {
+                    content: FlexMeasure::fixed(word),
+                    left:    FlexMeasure::zero(),
+                    right:   FlexMeasure::zero(),
+                    height:  Length::mm(6.0)
+                },
+                RenderItem::Word(WordId::new(SiteId(1), i as u32), WordPart::Full, Font { font_face: FontId::new(SiteId(1), 0), size: Length::mm(3.88) }),
+                Tag::Item(SequenceId::new(SiteId(1), 0), Id::null())
+            ));
+        }
+
+        items.push(Entry::Linebreak(true, false, Length::mm(6.0), Some(0.0)));
+        StreamVec(items)
+    }
+
+    /// How many words each line of the column holds.
+    fn words_per_line(items: StreamVec, width: Length) -> Vec<usize> {
+        let layout = ColumnLayout::new(items, width, Length::mm(500.0));
+        let columns = layout.columns();
+        let column = columns.columns().next().expect("one column");
+        column.map(|(_y, line)| line.filter(|(_, _, item, _)| matches!(item, RenderItem::Word(..))).count()).collect()
+    }
+
+    /// The happy case: the words add up to lines that can be stretched to the
+    /// measure, and those are the lines the layout takes.
+    #[test]
+    fn a_justified_paragraph_fills_the_measure() {
+        // 5 words of 19mm and 4 spaces of 1mm: 99mm in a 100mm measure.
+        let lines = words_per_line(paragraph(10, Length::mm(19.)), Length::mm(100.));
+        println!("{:?}", lines);
+        assert_eq!(lines, vec![5, 5]);
+    }
+
+    /// Words that do not happen to fill the measure go as far as they can.
+    /// When no break at all leaves a line that can be stretched to the full
+    /// measure, the line still has to be broken somewhere: the break with the
+    /// smallest gap wins over the one that comes first.
+    #[test]
+    fn an_unjustifiable_paragraph_still_fills_its_lines() {
+        // 18mm words in a 100mm measure: five are 94mm, a sixth can never fit.
+        let lines = words_per_line(paragraph(12, Length::mm(18.)), Length::mm(100.));
+        assert_eq!(lines, vec![5, 5, 2]);
+    }
+
+    /// The last line of a paragraph is allowed to be short. It must not pull
+    /// the lines before it short to be filled itself.
+    #[test]
+    fn a_short_last_line_does_not_shorten_the_others() {
+        // 7 words of 18mm: 5 on the first line, the other 2 are the last one.
+        let lines = words_per_line(paragraph(7, Length::mm(18.)), Length::mm(100.));
+        assert_eq!(lines, vec![5, 2]);
     }
 }
