@@ -19,6 +19,9 @@ pathfinder_color = { git = "https://github.com/s3bk/pathfinder/" }
 pathfinder_renderer = { git = "https://github.com/s3bk/pathfinder/" }
 pathfinder_export = { git = "https://github.com/s3bk/pathfinder/" }
 env_logger = "*"
+# `pdf` is the reader and writer; the exporter only uses `build` and `content`.
+# Same fork and branch as pdf_render, so both read and write one dialect.
+pdf = { git = "https://github.com/s3bk/pdf.git", branch = "master", default-features = false, features = ["cache"], optional = true }
 
 [features]
 import-docx = ["dep:docx"]
@@ -26,7 +29,9 @@ import-docx = ["dep:docx"]
 # pathfinder APIs and are not buildable today; the features only exist so the
 # binaries stay out of a plain `cargo build`.
 markdown = []
-pdf = []
+# The PDF exporter: subsets and embeds the fonts, and assembles the file with
+# the `pdf` crate's builder.
+pdf = ["dep:pdf"]
 
 [[bin]]
 name = "docx"
@@ -40,7 +45,7 @@ required-features = ["markdown"]
 
 [[bin]]
 name = "pdf"
-path = "src/bin/pdf.rs"
+path = "src/bin/pdf/main.rs"
 required-features = ["pdf"]
 
 [[bin]]

@@ -16,7 +16,7 @@ pub mod units;
 pub mod builder;
 pub mod draw;
 pub mod net;
-mod text;
+pub mod text;
 pub mod object;
 mod document;
 

@@ -75,6 +75,12 @@ impl From<Vec<u8>> for FontFaceInner {
     }
 }
 impl FontFace {
+    /// The font file as it was loaded. The PDF exporter subsets and embeds it,
+    /// so it needs the tables, not the parsed face.
+    pub fn data(&self) -> &[u8] {
+        &self.0.data
+    }
+
     pub fn from_data(data: Vec<u8>) -> Self {
         FontFace(Arc::new(data.into()))
     }

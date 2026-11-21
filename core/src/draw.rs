@@ -34,6 +34,21 @@ pub struct Layout {
     glyphs: Vec<(font::GlyphId, Transform2F)>,
 }
 impl Layout {
+    /// The glyphs of this run and where each one is placed, in the layout's own
+    /// space: each transform carries the pen position in millimetres.
+    ///
+    /// The PDF exporter needs the positions to decide when a reader's own
+    /// advance would put a glyph somewhere the layout did not; the outlines
+    /// come from the font program instead.
+    pub fn glyphs(&self) -> &[(font::GlyphId, Transform2F)] {
+        &self.glyphs
+    }
+
+    /// How far the pen moved over the whole run, in millimetres.
+    pub fn advance(&self) -> Vector2F {
+        self.advance
+    }
+
     pub fn render(&self, font: &FontFace, root_tr: Transform2F) -> Outline {
         let mut outline = Outline::new();
         for &(gid, tr) in self.glyphs.iter() {
