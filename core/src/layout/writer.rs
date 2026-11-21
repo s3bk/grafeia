@@ -143,8 +143,8 @@ impl Writer {
     fn write_glue(&mut self, left: Glue) {
         match self.state | left {
             Glue::Column => self.stream.push(Entry::Column),
-            Glue::Newline { fill, height, column_break } => {
-                self.stream.push(Entry::Linebreak(fill, height, column_break));
+            Glue::Newline { fill, vfill, height, column_break } => {
+                self.stream.push(Entry::Linebreak(fill, vfill, height, column_break));
             },
             Glue::Space { measure, line_break, column_break }
              => self.stream.push(Entry::Space(measure, line_break, column_break)),

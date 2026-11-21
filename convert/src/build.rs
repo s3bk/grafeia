@@ -116,6 +116,7 @@ pub fn build() -> State<'static> {
         column_break_penalty: 0.0,
         column_break_before: false,
         margin_hang: Length::zero(),
+        vertical_fill: false,
     };
 
     
@@ -145,6 +146,7 @@ pub fn build() -> State<'static> {
             column_break_penalty: 0.0,
             column_break_before: false,
             margin_hang: Length::zero(),
+            vertical_fill: false,
         }
     );
     design.set_type(
@@ -173,6 +175,7 @@ pub fn build() -> State<'static> {
             column_break_penalty: 0.0,
             column_break_before: false,
             margin_hang: Length::zero(),
+            vertical_fill: false,
         }
     );
 

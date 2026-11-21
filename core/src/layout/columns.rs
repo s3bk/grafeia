@@ -182,7 +182,7 @@ impl ParagraphLayout {
                     c.add_space(s);
                 }
 
-                Entry::Linebreak(fill, _, _) => {
+                Entry::Linebreak(fill, _, _, _) => {
                     if fill {
                         c.fill(c.width);
                     }
@@ -259,7 +259,8 @@ impl ParagraphLayout {
         });
     }
     pub fn lines(&self) -> Column {
-        Column::new(0, self.last, self)
+        // A paragraph on its own has no column to fill: nothing to hand out.
+        Column::new(0, self.last, self, Length::zero())
     }
 }
 impl ColumnLayout {
@@ -377,7 +378,7 @@ impl ColumnLayout {
         // the end of anything.
         let continues = |items: &[Entry], m: usize| m > 0 && matches!(
             items[m - 1],
-            Entry::Space(..) | Entry::Linebreak(_, _, None)
+            Entry::Space(..) | Entry::Linebreak(_, _, _, None)
         );
 
         let mut before = vec![1u16; len + 1];
@@ -407,7 +408,7 @@ impl ColumnLayout {
         let mut start = 0usize;
         for n in 1 ..= len {
             total[n] = after[start].max(1);
-            if let Entry::Linebreak(_, _, Some(column_break)) = self.para.items[n - 1] {
+            if let Entry::Linebreak(_, _, _, Some(column_break)) = self.para.items[n - 1] {
                 // the paragraph that ends here was opened by this
                 close_guard[n] = opened_by;
                 opened_by = column_break.min(0.0);
@@ -454,7 +455,7 @@ impl ColumnLayout {
 
             let penalty = if last > 0 {
                 let penalty = match self.para.items[last-1] {
-                    Entry::Linebreak(_, skip, col_break) => {
+                    Entry::Linebreak(_, _, skip, col_break) => {
                         height += skip;
                         col_break
                     },
@@ -564,14 +565,16 @@ impl Columns {
         Column::new(
             self.layout.nodes_col[last].unwrap().prev,
             last,
-            &self.layout.para
+            &self.layout.para,
+            self.layout.height
         )
     }
     pub fn columns(&self) -> impl Iterator<Item=Column> {
         self.columns.iter().rev().map(move |&last| Column::new(
             self.layout.nodes_col[last].unwrap().prev,
             last,
-            &self.layout.para
+            &self.layout.para,
+            self.layout.height
         ))
     }
     pub fn len(&self) -> usize {
@@ -586,20 +589,41 @@ impl Columns {
 pub struct Column<'a> {
     lines:      Vec<usize>, // points to the end of each line
     layout:     &'a ParagraphLayout,
-    y:          Length
+    y:          Length,
+    /// How much each vertical fill in this column may grow: the height of the
+    /// column minus everything that is actually in it. Empty columns of text
+    /// leave nothing, and a column with no fill never asks.
+    fill:       Length
 }
 impl<'a> Column<'a> {
-    fn new(first: usize, mut last: usize, layout: &'a ParagraphLayout) -> Self {
+    fn new(first: usize, mut last: usize, layout: &'a ParagraphLayout, height: Length) -> Self {
         let mut lines = Vec::new();
+        let mut used = Length::zero();
+        let mut fills = 0;
         while last > first {
             lines.push(last);
-            last = layout.nodes[last].unwrap().prev;
+            let node = layout.nodes[last].unwrap();
+            used += node.height;
+            if let Entry::Linebreak(_, vfill, skip, _) = layout.items[last - 1] {
+                used += skip;
+                if vfill {
+                    fills += 1;
+                }
+            }
+            last = node.prev;
         }
-        
+
+        let fill = if fills > 0 && height > used {
+            (height - used) * (1.0 / fills as f32)
+        } else {
+            Length::zero()
+        };
+
         Column {
             lines: lines,
             layout: layout,
-            y: Length::zero()
+            y: Length::zero(),
+            fill: fill
         }
     }
 }
@@ -612,7 +636,10 @@ impl<'a> Iterator for Column<'a> {
             self.y += b.height;
             let y = self.y;
 
-            if let Entry::Linebreak(_, skip, _) = self.layout.items[last-1] {
+            if let Entry::Linebreak(_, vfill, skip, _) = self.layout.items[last-1] {
+                if vfill {
+                    self.y += self.fill;
+                }
                 self.y += skip;
             }
             
@@ -677,7 +704,7 @@ impl<'a> Iterator for Line<'a> {
                     self.branches += 1;
                 },
                 Entry::BranchExit(skip) => self.pos += skip,
-                Entry::Linebreak(_, _, _) => unreachable!(),
+                Entry::Linebreak(_, _, _, _) => unreachable!(),
                 Entry::SetWidth(_, _) => {}
                 Entry::Column => unreachable!()
             }

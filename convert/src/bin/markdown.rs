@@ -105,6 +105,7 @@ fn main() {
         column_break_penalty: 0.0,
         column_break_before: false,
         margin_hang: Length::zero(),
+        vertical_fill: false,
     };
     let mut design = Design::new("default design".into(), default.clone());
     for (&typ, &size) in headings.iter().zip([10.0, 8.0, 6.0, 5.0, 5.0, 5.0f32].iter()) {

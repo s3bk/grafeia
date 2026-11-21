@@ -317,6 +317,12 @@ pub struct TypeDesign {
     /// Start this element at the top of a new column: a forced page break.
     pub column_break_before: bool,
 
+    /// Let the break in front of this element take up the rest of the column:
+    /// a vertical fill, which pushes everything after it to the foot of the
+    /// page. The space is handed out after the column's content is known, so
+    /// the fill itself never takes room from the text.
+    pub vertical_fill: bool,
+
     /// How far to the left of the text edge a word hung into the margin
     /// (`Item::Margin`) begins. The word measures nothing, so this is purely
     /// where it is drawn: it cannot move the line it belongs to.

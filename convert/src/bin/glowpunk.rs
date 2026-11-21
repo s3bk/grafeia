@@ -41,6 +41,9 @@ enum Block {
     /// A forced page break: nothing but the demand that what follows starts on
     /// a fresh page.
     Break,
+    /// A vertical fill: the space left in the column, so what follows comes to
+    /// rest at the foot of the page.
+    VFill,
     Kicker(String),
     Heading(String),
     Subheading(String),
@@ -87,9 +90,12 @@ fn parse(input: &str) -> Vec<Block> {
         } else if let Some(rest) = line.strip_prefix("# ") {
             flush(&mut paragraph, &mut blocks);
             blocks.push(Block::Heading(rest.trim().into()));
-        } else if line == "\\pagebreak" {
+        } else if line == "\\pagebreak" || line == "/pagebreak" {
             flush(&mut paragraph, &mut blocks);
             blocks.push(Block::Break);
+        } else if line == "\\vfill" || line == "/vfill" {
+            flush(&mut paragraph, &mut blocks);
+            blocks.push(Block::VFill);
         } else if let Some(rest) = line.strip_prefix("+ ") {
             flush(&mut paragraph, &mut blocks);
             blocks.push(Block::ListItem(rest.trim().into()));
@@ -165,6 +171,7 @@ fn main() {
     let lead_typ = document.create_type("lead", Type::new("Italic lead-in"));
     let list_item_typ = document.create_type("list-item", Type::new("List item"));
     let pagebreak_typ = document.create_type("pagebreak", Type::new("Forced page break"));
+    let vfill_typ = document.create_type("vfill", Type::new("Vertical fill"));
     let para_number_typ = document.create_type("paragraph-number", Type::new("Paragraph number in the margin"));
 
     let inter = document.add_font(font!("Inter-Regular.otf").to_vec());
@@ -204,6 +211,7 @@ fn main() {
         hyphen: Some(hyphen),
         column_break_penalty: 0.0,
         column_break_before: false,
+        vertical_fill: false,
         margin_hang: Length::zero(),
     };
 
@@ -298,7 +306,7 @@ fn main() {
     design.set_type(
         email_typ,
         TypeDesign {
-            display: block(0.0, 10.0),
+            display: block(0.0, 2.0),
             font: Font {
                 font_face: inter,
                 size: Length::mm(3.88),
@@ -410,6 +418,14 @@ fn main() {
             ..body.clone()
         },
     );
+    design.set_type(
+        vfill_typ,
+        TypeDesign {
+            display: Display::Inline,
+            vertical_fill: true,
+            ..body.clone()
+        },
+    );
     // Paragraph numbers: small, in the outer margin, hung off the text edge and
     // taking no width, so the line they start is laid out as if they were not
     // there. They start a quarter of the side margin out from the text edge,
@@ -455,6 +471,7 @@ fn main() {
                 continue;
             }
             Block::Break => { prev_was_kicker = false; pagebreak_typ },
+            Block::VFill => { prev_was_kicker = false; vfill_typ },
             Block::Kicker(t) => { seq_items.extend(document.create_text(&t.to_uppercase())); prev_was_kicker = true; kicker_typ },
             Block::Heading(t) => {
                 seq_items.extend(document.create_text(&t));

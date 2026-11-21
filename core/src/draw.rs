@@ -180,7 +180,8 @@ impl Cache {
         let hyphen_glue = Glue::Newline {
             height: Length::zero(),
             column_break: None,
-            fill: false
+            fill: false,
+            vfill: false
         };
 
         let text = &word.text;
@@ -304,6 +305,9 @@ impl Cache {
 
         if type_design.column_break_before {
             writer.promote(Glue::page_break());
+        }
+        if type_design.vertical_fill {
+            writer.promote(Glue::vfill());
         }
         match type_design.display {
             Display::Block(v) => writer.promote(Glue::hfill(v.above)),

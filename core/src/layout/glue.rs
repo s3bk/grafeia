@@ -12,7 +12,11 @@ pub enum Glue {
     },
     Newline {
         column_break:   Option<f32>,
+        /// Justify the line: the break stretches the line to the full measure.
         fill:           bool,
+        /// Take up the slack in the column: everything after the break is
+        /// pushed to the foot of the page.
+        vfill:          bool,
         height:         Length
     },
     Column
@@ -21,6 +25,7 @@ impl Glue {
     pub fn hfill(height: Length) -> Glue {
         Glue::Newline {
             fill: true,
+            vfill: false,
             column_break: Some(0.),
             height
         }
@@ -32,8 +37,23 @@ impl Glue {
     pub fn hfill_with(height: Length, column_break: f32) -> Glue {
         Glue::Newline {
             fill: true,
+            vfill: false,
             column_break: Some(column_break),
             height
+        }
+    }
+
+    /// A vertical fill: the break takes whatever height is left over in the
+    /// column, so everything after it comes to rest at the foot of the page.
+    /// While the column breaks are being chosen it measures nothing, so it can
+    /// never push anything out of the column; the space is only handed out
+    /// once the column's content is known.
+    pub fn vfill() -> Glue {
+        Glue::Newline {
+            fill: false,
+            vfill: true,
+            column_break: Some(0.),
+            height: Length::zero()
         }
     }
 
@@ -78,11 +98,11 @@ impl BitOr for Glue {
             (Column, _) | (_, Column) => Column,
 
             // Newline wins over Space
-            (Newline { fill, height, column_break }, Space { .. }) | (Space { .. }, Newline { fill, height, column_break })
-                => Newline { fill, height, column_break },
+            (Newline { fill, vfill, height, column_break }, Space { .. }) | (Space { .. }, Newline { fill, vfill, height, column_break })
+                => Newline { fill, vfill, height, column_break },
             
-            (Newline { fill: a, height: h_a, column_break: cb_a }, Newline { fill: b, height: h_b, column_break: cb_b })
-                => Newline { fill: a | b, height: h_a.max(h_b), column_break: merge_break(cb_a, cb_b) }
+            (Newline { fill: a, vfill: va, height: h_a, column_break: cb_a }, Newline { fill: b, vfill: vb, height: h_b, column_break: cb_b })
+                => Newline { fill: a | b, vfill: va | vb, height: h_a.max(h_b), column_break: merge_break(cb_a, cb_b) }
         }
     }
 }

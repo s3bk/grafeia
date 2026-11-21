@@ -45,8 +45,9 @@ enum Break {
 enum Entry {
     Item(ItemMeasure, RenderItem, Tag),
     
-    /// Continue on the next line (fill), and penalty for a column break
-    Linebreak(bool, Length, Option<f32>),
+    /// Continue on the next line (fill), take up the column's slack (vfill),
+    /// how far to move down, and the penalty for a column break
+    Linebreak(bool, bool, Length, Option<f32>),
     
     Column,
 

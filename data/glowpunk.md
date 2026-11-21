@@ -6,6 +6,8 @@
 
 %rule
 
+\vfill
+
 %byline BY
 
 %author Pete Herzog
