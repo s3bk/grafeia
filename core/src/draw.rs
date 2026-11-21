@@ -93,6 +93,9 @@ pub enum RenderItem {
     Word(WordId, WordPart, Font),
     Symbol(SymbolId, Font),
     Object(ObjectId),
+    /// Text that lives in the margin: the word, its font, and how far left of
+    /// the line it hangs. It measures nothing, so the layout never sees it.
+    Margin(WordId, Font, Length),
     Empty,
 }
 
@@ -209,17 +212,28 @@ impl Cache {
         }
     }
 
-    /// Text that hangs in the left margin. It adds nothing to the measure, so
-    /// the line breaking is untouched and the line it starts is laid out
-    /// exactly as if the margin text were not there.
+    /// Text that hangs in the left margin. It measures nothing at all — zero
+    /// left, zero content, zero right — so the line it starts is laid out
+    /// exactly as if the margin text were not there; the layout only records
+    /// where the line begins. The renderer draws it `hang` to the left of that
+    /// point, which is what makes the number a location, not a thing in the
+    /// stream that could move the text.
     fn render_margin(&mut self, writer: &mut Writer, ctx: &DrawCtx, tag: Tag, key: WordId) {
         let font = ctx.type_design.font;
-        let mut measure = self.measure_word_part(ctx, tag, font, key, &ctx.storage.get_word(key).text, WordPart::Full);
-        let hang = measure.content + FlexMeasure::fixed(ctx.type_design.margin_gap);
-        measure.left = hang;
-        measure.content = hang;
-        measure.right = FlexMeasure::zero();
-        writer.item(Glue::None, Glue::None, measure, RenderItem::Word(key, WordPart::Full, font), tag);
+        let measure = self.measure_word_part(ctx, tag, font, key, &ctx.storage.get_word(key).text, WordPart::Full);
+        let hang = measure.content.at(0.0) + ctx.type_design.margin_gap;
+        writer.item(
+            Glue::None,
+            Glue::None,
+            ItemMeasure {
+                left: FlexMeasure::zero(),
+                content: FlexMeasure::zero(),
+                right: FlexMeasure::zero(),
+                height: ctx.type_design.line_height
+            },
+            RenderItem::Margin(key, font, hang),
+            tag
+        );
     }
 
     fn render_symbol(&mut self, writer: &mut Writer, ctx: &DrawCtx, tag: Tag, key: SymbolId) {        let symbol = ctx.storage.get_symbol(key);
@@ -391,6 +405,9 @@ impl Cache {
                         RenderItem::Symbol(key, font) => {
                             positions.insert(tag, rect);
                         }
+                        // The number is not part of the text: it is placed at
+                        // draw time, out in the margin, and takes no room here.
+                        RenderItem::Margin(..) => {}
                         RenderItem::Object(key) => {
                             positions.insert(tag, rect);
                         }
@@ -465,6 +482,16 @@ impl Cache {
                             },
                             _ => panic!()
                         }
+                    }
+                    RenderItem::Margin(key, font, hang) => {
+                        // Out in the margin, `hang` to the left of where the
+                        // line begins. The pen for the rest of the line never
+                        // moved, so this is purely where it is drawn.
+                        let layout = self.word_layout_cache.get(&(font, key, WordPart::Full)).unwrap();
+                        let font = storage.get_font_face(font.font_face);
+                        let at = p - Vector2F::new(hang.value as f32, 0.0);
+                        let outline = layout.render(font, Transform2F::from_translation(at));
+                        scene.draw_path(outline, &glyph_style, None);
                     }
                     RenderItem::Symbol(key, font) => {
                         let layout = self.symbol_layout_cache.get(&(font, key)).unwrap();

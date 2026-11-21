@@ -534,7 +534,7 @@ fn main() {
         root,
     };
     if dump {
-        dump_lines(&state);
+        dump_lines(&state, flags.contains(&"--x"));
     }
 
     let output = File::create(output_path).expect("can't create output file");
@@ -544,7 +544,7 @@ fn main() {
 /// Print the laid out columns as text, one line per line. This is how a
 /// heading left at the foot of a page, a one-line widow or a stray space is
 /// found without reading the rendered pages.
-fn dump_lines(state: &State<'_>) {
+fn dump_lines(state: &State<'_>, debug_x: bool) {
     use grafeia_core::draw::{Cache, RenderItem, WordPart};
 
     let mut cache = Cache::new();
@@ -555,7 +555,14 @@ fn dump_lines(state: &State<'_>) {
         for (_y, line) in column {
             let mut text = String::new();
             let mut end = Length::zero();
+            let mut first = true;
             for (x, size, item, _tag) in line {
+                if first {
+                    first = false;
+                    if debug_x {
+                        text.push_str(&format!("[{:.3}|{:.3}] ", x.value, size.width.value));
+                    }
+                }
                 if !text.is_empty() && x - end > Length::mm(0.4) {
                     text.push(' ');
                 }
@@ -572,6 +579,7 @@ fn dump_lines(state: &State<'_>) {
                         text.push_str(&state.storage.get_word(key).text)
                     }
                     RenderItem::Symbol(key, _) => text.push_str(&state.storage.get_symbol(key).text),
+                    RenderItem::Margin(..) => {}
                     RenderItem::Object(_) => text.push_str("<object>"),
                     RenderItem::Empty => {}
                 }

@@ -5,6 +5,10 @@ pub struct Writer {
     state:      Glue,
     stream:     StreamVec,
     branch_stack: BranchStack,
+    /// The last item was a margin number: the glue in front of the next item
+    /// is the word space of the text the number hangs beside, and it must not
+    /// appear just because the number is there.
+    after_margin: bool,
 }
 
 #[derive(Debug)]
@@ -114,6 +118,7 @@ impl Writer {
             state:  Glue::None,
             stream: StreamVec::new(),
             branch_stack: BranchStack::default(),
+            after_margin: false,
         }
     }
     pub fn with_stream(stream: StreamVec) -> Writer {
@@ -121,6 +126,7 @@ impl Writer {
             state:  Glue::None,
             stream,
             branch_stack: BranchStack::default(),
+            after_margin: false,
         }
     }
     pub fn finish(mut self) -> StreamVec {
@@ -130,6 +136,7 @@ impl Writer {
     pub fn clear(&mut self) {
         self.state = Glue::None;
         self.stream.0.clear();
+        self.after_margin = false;
     }
     
     #[inline(always)]
@@ -146,7 +153,21 @@ impl Writer {
     }
     
     fn push(&mut self, left: Glue, right: Glue, entry: Entry) {
-        self.write_glue(left);
+        // A margin item hangs beside the line and takes no room. The glue in
+        // front of the next item is the paragraph's own word space, which must
+        // not appear just because a number sits before the first word — the
+        // line has to break exactly where it would have without the number.
+        // (`Empty` items are the sequence markers; they do not clear the flag.)
+        let swallow = self.after_margin;
+        if !swallow {
+            self.write_glue(left);
+        }
+        self.after_margin = match &entry {
+            Entry::Item(_, RenderItem::Margin(..), _) => true,
+            Entry::Item(_, RenderItem::Empty, _) => self.after_margin,
+            // Any other item, glue or line break ends the run.
+            _ => false,
+        };
         self.stream.push(entry);
         self.state = right;
     }
@@ -170,11 +191,13 @@ impl Writer {
     pub fn branch2(&mut self, count: usize, f: impl FnOnce(&mut Gen2)) {
         self.branch_stack.init(count);
         let state = self.state;
+        let after_margin = self.after_margin;
         f(&mut Gen2 {
             writer: self,
             count,
             at: 0,
-            state
+            state,
+            after_margin
         });
         self.branch_stack.finish(&mut self.stream);
     }
@@ -190,12 +213,16 @@ pub struct Gen2<'a> {
     /// into the first item of the next, and a word alternative that ends in a
     /// space would give the hyphenated alternative a space it never asked for.
     state: Glue,
+    /// Whether the last item was a margin number when the branch was entered:
+    /// every alternative starts from there, like the glue state.
+    after_margin: bool,
 }
 impl<'a> Gen2<'a> {
     pub fn add(&mut self, f: impl FnOnce(&mut Writer)) {
         assert!(self.at < self.count);
         self.writer.branch_stack.step(&mut self.writer.stream);
         self.writer.state = self.state;
+        self.writer.after_margin = self.after_margin;
         f(self.writer);
         self.at += 1;
     }

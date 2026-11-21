@@ -15,6 +15,7 @@ use pathfinder_geometry::{
 use grafeia_core::layout::Column;
 use grafeia_core::draw::{
     RenderItem,
+    WordPart,
     Cache
 };
 
@@ -250,6 +251,17 @@ impl Pdf {
                         });
                         stream.use_define(n, Transform2F::from_translation(p));
                     }
+                    RenderItem::Margin(key, font, hang) => {
+                        // A margin number: the same glyphs as a word, placed
+                        // `hang` to the left of where its line begins.
+                        let n = self.defined(item, || {
+                            let layout = cache.word_layout_cache.get(&(font, key, WordPart::Full)).unwrap();
+                            let font = storage.get_font_face(font.font_face);
+                            layout.render(font, Transform2F::default())
+                        });
+                        let at = p - Vector2F::new(hang.value as f32, 0.0);
+                        stream.use_define(n, Transform2F::from_translation(at));
+                    }
                     RenderItem::Symbol(key, font) => {
                         let n = self.defined(item, || {
                             let layout = cache.symbol_layout_cache.get(&(font, key)).unwrap();
@@ -358,7 +370,7 @@ impl Pdf {
         out.write_all(b"1 0 obj\n<< /Type /Catalog\n/Pages 2 0 R >>\nendobj\n")?;
 
         // Write the cross-reference table
-        let startxref = out.pos() + 1; // NOTE: apparently there's some 1-based indexing??
+        let startxref = out.pos();
         out.write_all(b"xref\n")?;
         write!(out, "0 {}\n", self.objects.len() + 1)?;
         out.write_all(b"0000000000 65535 f \n")?;
