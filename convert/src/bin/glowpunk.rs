@@ -204,7 +204,7 @@ fn main() {
         hyphen: Some(hyphen),
         column_break_penalty: 0.0,
         column_break_before: false,
-        margin_gap: Length::zero(),
+        margin_hang: Length::zero(),
     };
 
     let mut design = Design::new("Glowpunk article".into(), body.clone());
@@ -412,7 +412,8 @@ fn main() {
     );
     // Paragraph numbers: small, in the outer margin, hung off the text edge and
     // taking no width, so the line they start is laid out as if they were not
-    // there.
+    // there. They start a quarter of the side margin out from the text edge,
+    // which leaves them a clear column of their own, lined up on the left.
     design.set_type(
         para_number_typ,
         TypeDesign {
@@ -423,7 +424,7 @@ fn main() {
             },
             line_height: Length::mm(6.0),
             hyphen: None,
-            margin_gap: Length::mm(1.6),
+            margin_hang: Length::mm(39.4 / 4.0),
             ..body.clone()
         },
     );

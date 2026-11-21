@@ -115,7 +115,7 @@ pub fn build() -> State<'static> {
         dictionary,
         column_break_penalty: 0.0,
         column_break_before: false,
-        margin_gap: Length::zero(),
+        margin_hang: Length::zero(),
     };
 
     
@@ -144,7 +144,7 @@ pub fn build() -> State<'static> {
             dictionary,
             column_break_penalty: 0.0,
             column_break_before: false,
-            margin_gap: Length::zero(),
+            margin_hang: Length::zero(),
         }
     );
     design.set_type(
@@ -172,7 +172,7 @@ pub fn build() -> State<'static> {
             dictionary,
             column_break_penalty: 0.0,
             column_break_before: false,
-            margin_gap: Length::zero(),
+            margin_hang: Length::zero(),
         }
     );
 

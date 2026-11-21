@@ -204,7 +204,8 @@ pub enum Item {
 
     /// A word set into the left margin: it takes no width in the measure (the
     /// line breaking does not see it) and is painted to the left of the text
-    /// edge, ending as far before it as the type's `margin_gap` says.
+    /// edge, *starting* as far before it as the type's `margin_hang` says.
+    /// The numbers therefore line up on their left edge, out in the margin.
     Margin(WordId)
 }
 
@@ -310,9 +311,10 @@ pub struct TypeDesign {
     /// Start this element at the top of a new column: a forced page break.
     pub column_break_before: bool,
 
-    /// How far a word hung into the margin (`Item::Margin`) ends before the
-    /// text edge.
-    pub margin_gap: Length,
+    /// How far to the left of the text edge a word hung into the margin
+    /// (`Item::Margin`) begins. The word measures nothing, so this is purely
+    /// where it is drawn: it cannot move the line it belongs to.
+    pub margin_hang: Length,
 }
 
 pub enum VerticalAlign {

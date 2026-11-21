@@ -260,7 +260,11 @@ impl Pdf {
                             layout.render(font, Transform2F::default())
                         });
                         let at = p - Vector2F::new(hang.value as f32, 0.0);
+                        // Same 50% grey as the raster path: the form carries
+                        // only the outline, so the colour is set here.
+                        stream.set_fill_color(ColorU::new(128, 128, 128, 255));
                         stream.use_define(n, Transform2F::from_translation(at));
+                        stream.set_fill_color(ColorU::new(0, 0, 0, 255));
                     }
                     RenderItem::Symbol(key, font) => {
                         let n = self.defined(item, || {

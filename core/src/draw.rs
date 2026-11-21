@@ -215,13 +215,16 @@ impl Cache {
     /// Text that hangs in the left margin. It measures nothing at all — zero
     /// left, zero content, zero right — so the line it starts is laid out
     /// exactly as if the margin text were not there; the layout only records
-    /// where the line begins. The renderer draws it `hang` to the left of that
-    /// point, which is what makes the number a location, not a thing in the
-    /// stream that could move the text.
+    /// where the line begins. The renderer draws it starting `margin_hang` to
+    /// the left of that point, which is what makes the number a location, not
+    /// a thing in the stream that could move the text.
     fn render_margin(&mut self, writer: &mut Writer, ctx: &DrawCtx, tag: Tag, key: WordId) {
         let font = ctx.type_design.font;
-        let measure = self.measure_word_part(ctx, tag, font, key, &ctx.storage.get_word(key).text, WordPart::Full);
-        let hang = measure.content.at(0.0) + ctx.type_design.margin_gap;
+        // Lay the glyphs out (this fills the layout cache the renderers read)
+        // but take nothing from the measure: only the design says where the
+        // number starts.
+        let _ = self.measure_word_part(ctx, tag, font, key, &ctx.storage.get_word(key).text, WordPart::Full);
+        let hang = ctx.type_design.margin_hang;
         writer.item(
             Glue::None,
             Glue::None,
@@ -437,6 +440,13 @@ impl Cache {
             stroke: None,
             fill_rule: FillRule::NonZero
         });
+        // Margin numbers are set in 50% grey: present, but not part of the
+        // text, so a reader can follow them without reading them.
+        let margin_style = scene.build_style(PathStyle {
+            fill: Some(Paint::Solid((128, 128, 128, 255))),
+            stroke: None,
+            fill_rule: FillRule::NonZero
+        });
         let mut pb = PathBuilder::new();
         pb.rect(target.trim_box.into());
         
@@ -491,7 +501,7 @@ impl Cache {
                         let font = storage.get_font_face(font.font_face);
                         let at = p - Vector2F::new(hang.value as f32, 0.0);
                         let outline = layout.render(font, Transform2F::from_translation(at));
-                        scene.draw_path(outline, &glyph_style, None);
+                        scene.draw_path(outline, &margin_style, None);
                     }
                     RenderItem::Symbol(key, font) => {
                         let layout = self.symbol_layout_cache.get(&(font, key)).unwrap();
